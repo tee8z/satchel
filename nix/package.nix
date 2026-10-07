@@ -6,22 +6,21 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "koerier";
+  pname = "koerier-wallet";
   version = (lib.importTOML ../Cargo.toml).package.version;
   src = lib.fileset.toSource {
     root = ../.;
-    fileset = lib.fileset.unions (
-      [
-        ../Cargo.toml
-        ../Cargo.lock
-        ../src
-        ../assets
-        ../LICENSE-MIT
-        ../LICENSE-APACHE
-        ../README.md
-      ]
-      ++ lib.optional (builtins.pathExists ../tests) ../tests
-    );
+    fileset = lib.fileset.unions [
+      ../Cargo.toml
+      ../Cargo.lock
+      ../src
+      ../migrations
+      ../assets
+      ../example
+      ../LICENSE-MIT
+      ../LICENSE-APACHE
+      ../README.md
+    ];
   };
 
   cargoLock.lockFile = ../Cargo.lock;
@@ -30,13 +29,13 @@ rustPlatform.buildRustPackage {
   buildInputs = [ openssl ];
 
   meta = {
-    description = "Lightning Address and LNURL-pay server backed by LND";
-    homepage = "https://github.com/tee8z/koerier";
+    description = "Multi-account Lightning wallet and Lightning Address server for test networks only";
+    homepage = "https://github.com/tee8z/koerier-wallet";
     license = with lib.licenses; [
       mit
       asl20
     ];
-    mainProgram = "koerier";
+    mainProgram = "koerier-wallet";
     platforms = [
       "x86_64-linux"
       "aarch64-linux"

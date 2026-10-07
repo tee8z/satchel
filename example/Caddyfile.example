@@ -1,9 +1,6 @@
-ln.example.org {
-	@lnurl path /.well-known/lnurlp/* /lnurlp/*/callback
-	handle @lnurl {
-		header Access-Control-Allow-Origin "*"
-		header Cache-Control "no-store"
-		reverse_proxy 127.0.0.1:8090
-	}
-	respond 404
+# Everything goes to the wallet; /metrics lives on its own private listener.
+wallet.example.org {
+	@private path /healthz /metrics
+	respond @private 404
+	reverse_proxy 127.0.0.1:8095
 }

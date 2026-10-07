@@ -12,147 +12,178 @@ let
     mkOption
     types
     ;
-  cfg = config.services.koerier;
+  cfg = config.services.koerier-wallet;
   toml = pkgs.formats.toml { };
-  credentialName = alias: kind: "node-${alias}-${kind}";
-  configFile = toml.generate "koerier.toml" {
-    koerier = {
-      domain = cfg.publicUrl;
+  withoutNulls = lib.filterAttrs (_: value: value != null);
+  configFile = toml.generate "koerier-wallet.toml" {
+    server = withoutNulls {
       bind_address = cfg.listenAddress;
-      description = cfg.description;
-      request_timeout_secs = cfg.requestTimeoutSecs;
-      max_in_flight = cfg.maxInFlight;
-    }
-    // lib.optionalAttrs (cfg.imagePath != null) {
-      image_path = toString cfg.imagePath;
+      public_url = cfg.publicUrl;
+      database_path = "/var/lib/koerier-wallet/wallet.db";
+      metrics_address = cfg.metricsAddress;
+      client_ip_header = cfg.clientIpHeader;
+      admin_password_hash_file = if cfg.adminPasswordHashFile == null then null else "admin-password-hash";
+      reserved_usernames = cfg.reservedUsernames;
+      session_days = cfg.sessionDays;
+      allow_private_lnurl_hosts = cfg.allowPrivateLnurlHosts;
     };
-    nodes = lib.mapAttrs (alias: node: {
-      rest_host = node.restHost;
-      tls_cert_path = credentialName alias "tls";
-      invoice_macaroon_path = credentialName alias "invoice";
-      min_invoice_amount = node.minInvoiceAmount;
-      max_invoice_amount = node.maxInvoiceAmount;
-      invoice_expiry_sec = node.invoiceExpirySec;
-    }) cfg.nodes;
+    lnd = withoutNulls {
+      rest_host = cfg.lnd.restHost;
+      tls_cert_path = "lnd-tls";
+      macaroon_path = "lnd-macaroon";
+      request_timeout_secs = cfg.lnd.requestTimeoutSecs;
+      payment_timeout_secs = cfg.lnd.paymentTimeoutSecs;
+      expected_network = cfg.lnd.expectedNetwork;
+    };
+    limits = cfg.limits;
+    faucet = cfg.faucet;
+    rate_limits = cfg.rateLimits;
   };
   credentialPath = types.strMatching "/[^\n:]+";
-  nodeType = types.submodule {
-    options = {
-      restHost = mkOption {
-        type = types.str;
-        example = "127.0.0.1:8081";
-        description = "LND REST socket address. Connections use HTTPS and verify its certificate.";
-      };
-      tlsCertPath = mkOption {
-        type = credentialPath;
-        description = "Absolute runtime path to the LND TLS certificate; loaded with systemd credentials.";
-      };
-      invoiceMacaroonPath = mkOption {
-        type = credentialPath;
-        description = "Absolute runtime path to an invoice-only LND macaroon; never copied into the Nix store.";
-      };
-      minInvoiceAmount = mkOption {
-        type = types.ints.positive;
-        default = 1;
-        description = "Minimum invoice amount in satoshis.";
-      };
-      maxInvoiceAmount = mkOption {
-        type = types.ints.positive;
-        default = 1000000;
-        description = "Maximum invoice amount in satoshis.";
-      };
-      invoiceExpirySec = mkOption {
-        type = types.ints.positive;
-        default = 600;
-        description = "Invoice expiry in seconds.";
-      };
-    };
-  };
 in
 {
-  options.services.koerier = {
-    enable = mkEnableOption "the Koerier Lightning Address server";
+  options.services.koerier-wallet = {
+    enable = mkEnableOption "koerier-wallet, a multi-account Lightning wallet for test networks only";
     package = mkOption {
       type = types.package;
       default = pkgs.callPackage ./package.nix { };
       defaultText = lib.literalExpression "pkgs.callPackage ./package.nix { }";
-      description = "Koerier package to run.";
+      description = "koerier-wallet package to run.";
     };
     listenAddress = mkOption {
       type = types.str;
-      default = "127.0.0.1:8090";
+      default = "127.0.0.1:8095";
       description = "Private HTTP socket address. This module does not open firewall ports.";
     };
     publicUrl = mkOption {
       type = types.str;
-      example = "https://lnurl.example.com";
-      description = "Public HTTPS origin used for Lightning Addresses and callback URLs.";
+      example = "https://wallet.example.org";
+      description = "Public HTTPS origin. Lightning Addresses use its host.";
     };
-    description = mkOption {
-      type = types.str;
-      default = "Lightning payment";
-      description = "Text description included in LNURL metadata.";
-    };
-    imagePath = mkOption {
-      type = types.nullOr types.path;
+    metricsAddress = mkOption {
+      type = types.nullOr types.str;
       default = null;
-      description = "Optional image file readable by the service for LNURL metadata.";
+      example = "127.0.0.1:9095";
+      description = "Optional private listener for /metrics and /healthz.";
     };
-    requestTimeoutSecs = mkOption {
+    clientIpHeader = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "x-forwarded-for";
+      description = "Header a trusted reverse proxy sets to the client address (right-most entry), for rate limits.";
+    };
+    adminPasswordHashFile = mkOption {
+      type = types.nullOr credentialPath;
+      default = null;
+      description = "Runtime path to the operator's argon2id hash (koerier-wallet hash-password). Null disables /admin.";
+    };
+    reservedUsernames = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = "Usernames nobody may register, on top of the built-in list.";
+    };
+    sessionDays = mkOption {
       type = types.ints.positive;
-      default = 10;
-      description = "Deadline in seconds for an LND request.";
+      default = 14;
+      description = "How long a login lasts.";
     };
-    maxInFlight = mkOption {
-      type = types.ints.positive;
-      default = 16;
-      description = "Maximum number of concurrent LND requests.";
+    allowPrivateLnurlHosts = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Allow paying Lightning Addresses on loopback or private addresses (local regtest only).";
     };
-    nodes = mkOption {
-      type = types.attrsOf nodeType;
+    lnd = {
+      restHost = mkOption {
+        type = types.str;
+        example = "127.0.0.1:8080";
+        description = "LND REST socket address. Connections use HTTPS and verify its certificate.";
+      };
+      tlsCertPath = mkOption {
+        type = credentialPath;
+        description = "Runtime path to LND's TLS certificate; loaded with systemd credentials.";
+      };
+      macaroonPath = mkOption {
+        type = credentialPath;
+        description = ''
+          Runtime path to a macaroon with info:read invoices:read invoices:write offchain:read
+          offchain:write onchain:read; never copied into the Nix store.
+        '';
+      };
+      expectedNetwork = mkOption {
+        type = types.nullOr (
+          types.enum [
+            "testnet"
+            "testnet4"
+            "signet"
+            "regtest"
+            "simnet"
+          ]
+        );
+        default = null;
+        example = "signet";
+        description = "Refuse to start unless LND reports this network. Mainnet is always refused.";
+      };
+      requestTimeoutSecs = mkOption {
+        type = types.ints.positive;
+        default = 10;
+        description = "Deadline for an LND request.";
+      };
+      paymentTimeoutSecs = mkOption {
+        type = types.ints.positive;
+        default = 60;
+        description = "How long LND may try to route a payment.";
+      };
+    };
+    limits = mkOption {
+      type = toml.type;
       default = { };
-      description = "Lightning Address aliases and their backing LND nodes.";
+      example = {
+        max_balance_sat = 1000000;
+        max_payment_sat = 250000;
+      };
+      description = "The [limits] table; see example/config.toml.example for keys and defaults.";
+    };
+    faucet = mkOption {
+      type = toml.type;
+      default = { };
+      example = {
+        enabled = true;
+        amount_sat = 10000;
+      };
+      description = "The [faucet] table. The faucet is off unless enabled here.";
+    };
+    rateLimits = mkOption {
+      type = toml.type;
+      default = { };
+      description = "The [rate_limits] table.";
     };
   };
 
   config = mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.nodes != { };
-        message = "services.koerier.nodes must contain at least one LND node.";
-      }
-      {
         assertion = builtins.match "https://[^/@?#]+/?" cfg.publicUrl != null;
-        message = "services.koerier.publicUrl must be an HTTPS origin without a path, query, or credentials.";
+        message = "services.koerier-wallet.publicUrl must be an HTTPS origin without a path, query, or credentials.";
       }
-    ]
-    ++ lib.concatLists (
-      lib.mapAttrsToList (alias: node: [
-        {
-          assertion = builtins.match "[a-z0-9_-]{1,64}" alias != null;
-          message = "Koerier aliases must contain 1 to 64 lowercase letters, digits, underscores, or hyphens.";
-        }
-        {
-          assertion = node.minInvoiceAmount <= node.maxInvoiceAmount;
-          message = "services.koerier.nodes.${alias}: minimum invoice amount exceeds maximum.";
-        }
-      ]) cfg.nodes
-    );
+    ];
 
-    systemd.services.koerier = {
-      description = "Koerier Lightning Address server";
+    systemd.services.koerier-wallet = {
+      description = "koerier-wallet (test networks only)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      # Paying other Lightning Addresses needs the public CA roots.
+      environment.SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} -c ${configFile}";
-        LoadCredential = lib.concatLists (
-          lib.mapAttrsToList (alias: node: [
-            "${credentialName alias "tls"}:${node.tlsCertPath}"
-            "${credentialName alias "invoice"}:${node.invoiceMacaroonPath}"
-          ]) cfg.nodes
-        );
+        ExecStart = "${lib.getExe cfg.package} --config ${configFile}";
+        LoadCredential = [
+          "lnd-tls:${cfg.lnd.tlsCertPath}"
+          "lnd-macaroon:${cfg.lnd.macaroonPath}"
+        ]
+        ++ lib.optional (cfg.adminPasswordHashFile != null) "admin-password-hash:${cfg.adminPasswordHashFile}";
         DynamicUser = true;
+        StateDirectory = "koerier-wallet";
+        StateDirectoryMode = "0700";
         Restart = "on-failure";
         RestartSec = "5s";
         UMask = "0077";

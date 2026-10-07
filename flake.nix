@@ -1,5 +1,5 @@
 {
-  description = "Koerier Lightning Address server for LND";
+  description = "koerier-wallet: multi-account Lightning wallet and Lightning Address server for test networks only";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
 
@@ -17,16 +17,16 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          koerier = pkgs.callPackage ./nix/package.nix { };
+          koerier-wallet = pkgs.callPackage ./nix/package.nix { };
         in
         {
-          inherit koerier;
-          default = koerier;
+          inherit koerier-wallet;
+          default = koerier-wallet;
         }
       );
 
       nixosModules.default = import ./nix/module.nix;
-      nixosModules.koerier = self.nixosModules.default;
+      nixosModules.koerier-wallet = self.nixosModules.default;
 
       checks = forAllSystems (
         system:
@@ -34,7 +34,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          package = self.packages.${system}.koerier;
+          package = self.packages.${system}.koerier-wallet;
           module = import ./nix/tests/module.nix { inherit nixpkgs pkgs; };
         }
       );

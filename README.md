@@ -1,134 +1,180 @@
-# koerier
+# koerier-wallet
 
-A small Rust service that gives multiple LND nodes Lightning Addresses on one HTTPS domain.
-This fork extends [luisschwab/koerier](https://github.com/luisschwab/koerier) with explicit node routing and bounded invoice requests.
-The original MIT OR Apache-2.0 licenses remain in effect.
+> **Test networks only.** koerier-wallet is a custodial, unaudited wallet for
+> Mutinynet, signet, testnet, and regtest. It refuses to start when its LND
+> node is on Bitcoin mainnet, and there is no flag to change that. Never use
+> it with real bitcoin.
 
-| Lightning Address | LND REST endpoint |
-| --- | --- |
-| `odin@ln.example.org` | `127.0.0.1:8080` |
-| `thor@ln.example.org` | `127.0.0.1:8081` |
-| `freya@ln.example.org` | `127.0.0.1:8082` |
+A small multi-account Lightning wallet with a Lightning Address for every
+account, built for people testing Lightning apps: sign up in a browser, pay
+test invoices, and receive payouts or refunds at `you@your-wallet-domain`.
 
-Each configured name maps to one LND node. Unknown names return an error.
-The service creates invoices; payments travel over Lightning directly to the selected node.
-It needs an invoice macaroon and TLS certificate for each node, with no wallet database or payment-sending credentials.
+One LND node holds the funds; each account's balance lives in an append-only
+SQLite ledger. Pages are server-rendered with [maud](https://maud.lambda.xyz)
+and [htmx](https://htmx.org); the only script is a small file for copy buttons
+and Nostr login.
 
-```mermaid
-sequenceDiagram
-    participant Payer
-    participant Koerier
-    participant Thor as Thor LND
-    Payer->>Koerier: GET /.well-known/lnurlp/thor
-    Koerier-->>Payer: Metadata, amount limits, callback URL
-    Payer->>Koerier: GET /lnurlp/thor/callback?amount=1999
-    Koerier->>Thor: AddInvoice for 1999 millisatoshis
-    Thor-->>Koerier: BOLT11 invoice
-    Koerier-->>Payer: Invoice
-    Payer->>Thor: Pay over Lightning
-```
+This project derives from [Koerier](https://github.com/tee8z/koerier), a
+Lightning Address server for LND (itself a fork of
+[luisschwab/koerier](https://github.com/luisschwab/koerier)), and keeps its
+history and its MIT OR Apache-2.0 licenses.
+
+## What it does
+
+- **Accounts**: username and password (argon2id), or Nostr login with a NIP-07
+  signer extension; an account can have both. Each account gets
+  `username@<domain>`.
+- **Receive**: LNURL-pay (LUD-06, LUD-12 comments, LUD-16 Lightning
+  Addresses) per account, and a "create invoice" form with a QR code.
+  Invoices are credited once, from LND's invoice stream, with reconciliation
+  at startup and every minute.
+- **Send**: paste a BOLT11 invoice, a Lightning Address, or an LNURL. The
+  amount plus a routing-fee budget is reserved first; unused budget or the
+  whole amount comes back when LND reports the result. Payments between two
+  accounts on this server settle inside the ledger without touching Lightning.
+- **Faucet** (off by default): operator-funded test sats with per-account and
+  global 24-hour limits, never more than the node's channel balance covers.
+- **Operator page**: accounts and balances, total liabilities against the
+  node's channel and on-chain balances, faucet usage, freeze and credit
+  actions. It uses its own password, separate from user accounts.
+
+## Safety model
+
+- **Network guard**: at startup the server asks LND for its chain and network
+  and stops unless it is one of `testnet`, `testnet4`, `signet`, `regtest`,
+  or `simnet`. `lnd.expected_network` can pin one of them. Invoices are
+  decoded by LND, which rejects invoices for other networks, and `lnbc`
+  invoices are refused outright. Every page shows a "Test network only"
+  banner.
+- **Ledger**: balances are sums of ledger entries. SQLite triggers reject
+  updates, deletes, and any entry that would make a balance negative; every
+  entry has a unique idempotency key; all writes go through one connection
+  in `BEGIN IMMEDIATE` transactions. An invoice can credit one account once,
+  whether it is paid over Lightning or internally.
+- **Payments**: a payment whose outcome is unknown (for example, LND
+  restarted mid-flight) stays pending until reconciliation reads the result
+  from LND; it is refunded only when LND reports a failure or says it never
+  started the payment. Form submissions carry a request key, so a repeated
+  submission returns the first result instead of paying twice.
+- **Web**: session cookies are `__Host-`, `HttpOnly`, `SameSite=Lax`; every
+  state-changing request must come from this origin and carry the session's
+  CSRF token. A strict Content-Security-Policy allows only this site's own
+  scripts and styles. Login, sign-up, LNURL callbacks, payments, and invoice
+  creation are rate limited per client address and per account.
+- **Paying other servers**: Lightning Address lookups resolve the host once,
+  refuse loopback, private, and other non-public addresses, pin the
+  connection to the checked address, and follow no redirects. The invoice
+  returned must match the requested amount and the address metadata hash.
+
+Not in scope: fund recovery, multi-node setups, mainnet hardening, or an
+audit. Treat every balance as an IOU from the operator.
 
 ## Run
 
-Linux release archives are published for `x86_64-linux` and `aarch64-linux`.
-Each archive contains `bin/koerier`, its source revision in `share/koerier/REVISION`, and licenses in `share/koerier/licenses`.
-A matching `.tar.gz.sha256` file verifies each archive.
-Release binaries statically link SHA256-verified OpenSSL 3.5.9; the host supplies the Linux C runtime.
-
-The [release workflow](.github/workflows/release.yml) runs only through `workflow_dispatch` and does not run test suites.
-By default, it builds downloadable workflow artifacts without publishing.
-To publish, dispatch the workflow on the existing version tag, such as `v1.2.2`, with `publish` enabled.
-The tag must match the package version in `Cargo.toml`.
-
-Install Rust 1.95 or later, `pkg-config`, and the OpenSSL development headers and libraries.
-For Nix users, `nix develop` provides these build dependencies.
-
-Build with the committed dependency lock:
+Install Rust 1.95 or later, `pkg-config`, and the OpenSSL development
+headers. `nix develop` provides them.
 
 ```sh
 cargo build --release --locked
 cp example/config.toml.example config.toml
+./target/release/koerier-wallet hash-password < operator-password.txt > admin-password.hash
+./target/release/koerier-wallet --config config.toml
 ```
 
-Edit `config.toml` with your public HTTPS origin, node endpoints, and credential paths.
-Then start the service:
+The LND macaroon needs exactly these permissions:
 
 ```sh
-./target/release/koerier --config config.toml
+lncli bakemacaroon --save_to wallet.macaroon \
+  info:read invoices:read invoices:write offchain:read offchain:write onchain:read
 ```
 
-Relative credential paths resolve beneath `CREDENTIALS_DIRECTORY` when systemd provides it.
-Otherwise, they resolve beside the configuration file. Absolute paths also work.
-Use the binary `invoice.macaroon`, not its hex encoding.
-The node certificate must cover the IP address in `rest_host`.
+Relative credential paths resolve under `CREDENTIALS_DIRECTORY` when systemd
+provides it, and otherwise beside the configuration file. The LND certificate
+must cover the IP address in `rest_host`.
 
-The example listens on `127.0.0.1:8090`. Put Caddy or another HTTPS reverse proxy in front of it.
-See [the Caddy example](example/Caddyfile.example) and [the systemd example](example/koerier.service.example).
-Serve discovery and callback paths publicly; keep `/healthz` private.
-If the proxy runs on another host, bind the private interface and allow only that proxy through the firewall.
+Put an HTTPS reverse proxy in front of the private listener (see
+[the Caddy example](example/Caddyfile.example)) and set
+`server.client_ip_header` to the header it fills, so rate limits see real
+client addresses. Keep `/metrics` and `/healthz` private; with
+`server.metrics_address` they get their own listener.
+
+Environment variables: `KOERIER_WALLET_CONFIG` (config path),
+`KOERIER_WALLET_ADMIN_PASSWORD_HASH` (operator hash, instead of a file),
+`KOERIER_WALLET_LOG_JSON=true` (JSON logs), and `RUST_LOG` (log filter).
 
 ## Configuration
 
-The `[koerier]` section configures the shared listener and HTTPS origin.
-Use one `[nodes.<name>]` section per LND node, as shown in [the complete example](example/config.toml.example).
+See [the complete example](example/config.toml.example). Amounts are in sats.
 
-| Setting | Meaning |
+| Section | Keys |
 | --- | --- |
-| `domain` | Public HTTPS origin used to construct callbacks; request Host headers do not change it |
-| `bind_address` | Private HTTP listener |
-| `request_timeout_secs` | Deadline for each LND request; defaults to 10 seconds |
-| `max_in_flight` | Maximum simultaneous invoice requests; defaults to 16 |
-| `min_invoice_amount`, `max_invoice_amount` | Per-node advertised amount bounds, configured in satoshis |
-| `invoice_expiry_sec` | Per-node invoice lifetime |
+| `[server]` | `bind_address`, `public_url` (HTTPS origin; addresses use its host), `database_path`, `metrics_address`, `client_ip_header`, `admin_password_hash_file`, `reserved_usernames`, `session_days`, `allow_private_lnurl_hosts` (local regtest only) |
+| `[lnd]` | `rest_host`, `tls_cert_path`, `macaroon_path`, `request_timeout_secs`, `payment_timeout_secs`, `expected_network` |
+| `[limits]` | `max_balance_sat`, `max_payment_sat`, `min_receive_sat`, `max_receive_sat`, `invoice_expiry_secs`, `fee_limit_ppm`, `min_fee_limit_sat` |
+| `[faucet]` | `enabled` (default `false`), `amount_sat`, `per_account_daily_sat`, `global_daily_sat` |
+| `[rate_limits]` | `login_per_ip_per_minute`, `login_per_account_per_hour`, `signup_per_ip_per_hour`, `lnurl_per_ip_per_minute`, `lnurl_per_account_per_minute`, `send_per_account_per_minute`, `receive_per_account_per_minute` |
 
-Discovery and callback amounts use millisatoshis. A 1,999-msat request creates a 1,999-msat invoice without rounding.
-Invoices include private-channel route hints and a description hash of the exact advertised metadata.
-Node requests verify TLS, disable redirects and proxies, reuse connections, and return bounded errors when LND is unavailable.
-On Linux, the native TLS backend uses OpenSSL and trusts only the certificate configured for that node.
-It verifies certificate validity and the requested IP address, including LND's self-signed certificates with `CA:true`.
-The service uses the configured LND node's Bitcoin network, including Mutinynet signet.
-Verify each backend's network and channels before paying; koerier does not independently verify the returned BOLT11 invoice.
-
-This fork replaces upstream's single `[lnd]` section with `[nodes.<name>]` sections.
-Callbacks now include the configured node name: `/lnurlp/<name>/callback`.
+The balance cap is enforced when invoices are created; a payment that
+arrives for an existing invoice is always credited.
 
 ## NixOS
 
-The flake exports packages for `x86_64-linux` and `aarch64-linux`, plus `nixosModules.default`.
-See [the NixOS module](nix/module.nix) for its options.
-Credentials remain host files and are passed through systemd `LoadCredential`.
-The module does not open a public firewall port or configure DNS/TLS.
+The flake exports `packages.<system>.koerier-wallet` for `x86_64-linux` and
+`aarch64-linux`, and `nixosModules.default` (`services.koerier-wallet`).
+
+```nix
+services.koerier-wallet = {
+  enable = true;
+  publicUrl = "https://wallet.example.org";
+  clientIpHeader = "x-forwarded-for";
+  metricsAddress = "127.0.0.1:9095";
+  adminPasswordHashFile = "/run/secrets/koerier-wallet-admin.hash";
+  lnd = {
+    restHost = "127.0.0.1:8080";
+    tlsCertPath = "/var/lib/lnd/tls.cert";
+    macaroonPath = "/run/secrets/koerier-wallet.macaroon";
+    expectedNetwork = "signet";
+  };
+  faucet = { enabled = true; amount_sat = 10000; };
+};
+```
+
+Credentials stay host files loaded with systemd `LoadCredential`; the
+database lives in `/var/lib/koerier-wallet`. The module opens no firewall
+ports and configures no DNS or TLS.
 
 ```sh
-nix build .#koerier
+nix build .#koerier-wallet
 nix flake check
 ```
 
-## Verify
+## Metrics
 
-Fetch discovery, then request a small invoice:
+`/metrics` (Prometheus text) reports totals only, never per-account labels:
+accounts, frozen accounts, liabilities, the node's local channel balance,
+pending payments, open invoices, faucet use, payment and invoice counters,
+sign-ups, failed logins, rate-limited requests, and whether the LND invoice
+stream is connected.
 
-```sh
-curl --fail https://ln.example.org/.well-known/lnurlp/thor
-curl --fail 'https://ln.example.org/lnurlp/thor/callback?amount=1999'
-```
-
-Discovery returns `tag: payRequest` and a callback for Thor.
-The callback returns `pr`, containing an invoice for exactly 1,999 msat.
-Pay it from a different node and confirm receipt on Thor. Repeat for Freya.
-Creating an invoice alone does not verify payment routing or receipt.
-
-`GET /healthz` reports process liveness, not LND synchronization or channel liquidity.
-Restart koerier after replacing node certificates or macaroons; it loads credentials at startup.
-
-Run the focused protocol and backend checks locally:
+## Development
 
 ```sh
 cargo fmt --all --check
-cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
 ```
 
-This service implements ordinary [LNURL-pay](https://github.com/lnurl/luds/blob/luds/06.md)
-and [Lightning Addresses](https://github.com/lnurl/luds/blob/luds/16.md).
-It does not create hold invoices tied to a caller-provided payment hash.
+The tests run against SQLite and an in-memory LND: exactly-once credits, no
+negative balances, idempotent requests, concurrent sends, refunds and
+reconciliation, internal transfers, the faucet limits, the LNURL endpoints,
+the mainnet refusal, Nostr login, CSRF and origin checks, and the operator
+pages.
+
+Release archives come from the [release workflow](.github/workflows/release.yml),
+which runs only by `workflow_dispatch`.
+
+## License
+
+MIT OR Apache-2.0, as in Koerier. See [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE). htmx 4.0.0 is vendored under its own
+BSD Zero Clause license in `assets/vendor/htmx`.

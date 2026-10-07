@@ -1,32 +1,56 @@
-[koerier]
-domain = "https://ln.example.org"
-bind_address = "127.0.0.1:8090"
-description = "Mutinynet test payment"
-request_timeout_secs = 10
-max_in_flight = 16
+# koerier-wallet example for Mutinynet (signet). TEST NETWORKS ONLY:
+# the server refuses to start if LND reports Bitcoin mainnet.
 
-# Relative credential paths use CREDENTIALS_DIRECTORY, or the config directory.
-# Amount bounds below are in sats; LNURL requests and invoices use exact msats.
-[nodes.odin]
+[server]
+# Private listener; put an HTTPS reverse proxy (see Caddyfile.example) in front.
+bind_address = "127.0.0.1:8095"
+# Public origin. Lightning Addresses are <username>@<this host>.
+public_url = "https://wallet.example.org"
+database_path = "/var/lib/koerier-wallet/wallet.db"
+# Optional private listener for /metrics and /healthz (Prometheus).
+metrics_address = "127.0.0.1:9095"
+# The reverse proxy sets this header; the right-most address is the client.
+client_ip_header = "x-forwarded-for"
+# argon2id hash from `koerier-wallet hash-password`, relative to CREDENTIALS_DIRECTORY
+# or this file. KOERIER_WALLET_ADMIN_PASSWORD_HASH overrides it. Omit to disable /admin.
+admin_password_hash_file = "admin-password.hash"
+reserved_usernames = []
+session_days = 14
+
+[lnd]
+# LND REST endpoint, certificate, and a macaroon baked with:
+#   lncli bakemacaroon info:read invoices:read invoices:write offchain:read offchain:write onchain:read
 rest_host = "127.0.0.1:8080"
-tls_cert_path = "odin.cert"
-invoice_macaroon_path = "odin.macaroon"
-min_invoice_amount = 1
-max_invoice_amount = 1_000_000
-invoice_expiry_sec = 300
+tls_cert_path = "tls.cert"
+macaroon_path = "wallet.macaroon"
+request_timeout_secs = 10
+payment_timeout_secs = 60
+# Refuse to start unless LND is on exactly this network.
+expected_network = "signet"
 
-[nodes.thor]
-rest_host = "127.0.0.1:8081"
-tls_cert_path = "thor.cert"
-invoice_macaroon_path = "thor.macaroon"
-min_invoice_amount = 1
-max_invoice_amount = 1_000_000
-invoice_expiry_sec = 300
+[limits]
+max_balance_sat = 1_000_000
+max_payment_sat = 250_000
+min_receive_sat = 1
+max_receive_sat = 250_000
+invoice_expiry_secs = 3600
+# Routing fee budget: 1% of the amount, at least 10 sats.
+fee_limit_ppm = 10_000
+min_fee_limit_sat = 10
 
-[nodes.freya]
-rest_host = "127.0.0.1:8082"
-tls_cert_path = "freya.cert"
-invoice_macaroon_path = "freya.macaroon"
-min_invoice_amount = 1
-max_invoice_amount = 1_000_000
-invoice_expiry_sec = 300
+[faucet]
+# Off unless enabled. Grants are IOUs on the node's channel balance and are
+# refused once all balances together would exceed it.
+enabled = true
+amount_sat = 10_000
+per_account_daily_sat = 20_000
+global_daily_sat = 500_000
+
+[rate_limits]
+login_per_ip_per_minute = 10
+login_per_account_per_hour = 30
+signup_per_ip_per_hour = 5
+lnurl_per_ip_per_minute = 60
+lnurl_per_account_per_minute = 30
+send_per_account_per_minute = 10
+receive_per_account_per_minute = 20

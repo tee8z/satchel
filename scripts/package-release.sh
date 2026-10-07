@@ -46,9 +46,9 @@ verify_static_tls() {
 assemble_archive() {
   local package_root share
   package_root="$work/$name"
-  share="$package_root/share/koerier"
+  share="$package_root/share/koerier-wallet"
   mkdir -p "$package_root/bin" "$share/licenses"
-  install -m 0755 "$binary" "$package_root/bin/koerier"
+  install -m 0755 "$binary" "$package_root/bin/koerier-wallet"
   printf '%s\n' "$revision" > "$share/REVISION"
   install -m 0644 LICENSE-MIT LICENSE-APACHE "$share/licenses/"
   install -m 0644 "$openssl_prefix/share/licenses/openssl/LICENSE.txt" \
@@ -78,7 +78,7 @@ main() {
   output=$6
   validate_inputs
   verify_static_tls
-  name="koerier-$version-$system"
+  name="koerier-wallet-$version-$system"
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   assemble_archive
