@@ -172,7 +172,7 @@ fn apply_env(table: &mut toml::Table, vars: impl IntoIterator<Item = (String, St
         let value = toml::from_str::<toml::Table>(&format!("value = {raw}"))
             .ok()
             .and_then(|mut parsed| parsed.remove("value"))
-            .unwrap_or_else(|| toml::Value::String(raw));
+            .unwrap_or(toml::Value::String(raw));
         let section = section.to_ascii_lowercase();
         let entry = table
             .entry(section.clone())
