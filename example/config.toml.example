@@ -2,6 +2,9 @@
 # the server refuses to start if LND reports Bitcoin mainnet.
 
 [server]
+network_name = "Mutinynet"
+# Link to an independently hosted recovery tool, when one is available.
+# recovery_url = "/recover/"
 # Private listener; put an HTTPS reverse proxy (see Caddyfile.example) in front.
 bind_address = "127.0.0.1:8095"
 # Public origin. Lightning Addresses are <username>@<this host>.

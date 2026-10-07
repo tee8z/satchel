@@ -30,6 +30,12 @@ pub(crate) struct Server {
     pub(crate) bind_address: SocketAddr,
     /// Public origin. Lightning Addresses use its host: `alice@<host>`.
     pub(crate) public_url: String,
+    /// Human-readable deployment name, separate from LND's consensus network.
+    #[serde(default)]
+    pub(crate) network_name: Option<String>,
+    /// Optional independently hosted entry-recovery page, linked from the wallet.
+    #[serde(default)]
+    pub(crate) recovery_url: Option<String>,
     pub(crate) database_path: PathBuf,
     /// Optional private listener for `/metrics` and `/healthz`.
     #[serde(default)]
@@ -255,6 +261,23 @@ impl Config {
 
     pub(crate) fn validate(&self) -> Result<()> {
         public_origin(&self.server.public_url)?;
+        if let Some(name) = &self.server.network_name
+            && (name.trim().is_empty() || name.chars().count() > 48 || name.chars().any(char::is_control))
+        {
+            bail!("server.network_name must contain 1 to 48 printable characters");
+        }
+        if let Some(value) = &self.server.recovery_url {
+            let local = value.starts_with('/') && !value.starts_with("//");
+            let https = Url::parse(value).is_ok_and(|url| {
+                url.scheme() == "https"
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            });
+            if value.contains('\\') || value.chars().any(char::is_control) || !(local || https) {
+                bail!("server.recovery_url must be a local path or HTTPS URL");
+            }
+        }
         if let Some(operator_url) = &self.server.operator_url {
             public_origin(operator_url).context("invalid server.operator_url")?;
         }

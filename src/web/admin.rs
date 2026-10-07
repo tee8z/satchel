@@ -20,7 +20,7 @@ use crate::util::{parse_sats, random_token};
 const MINUTE: Duration = Duration::from_secs(60);
 
 pub(super) async fn login_page(State(app): State<Shared>, _host: OperatorHost) -> Response {
-    pages::admin_login(&Ctx::visitor(&app.wallet.network), None).into_response()
+    pages::admin_login(&Ctx::visitor(&app.wallet), None).into_response()
 }
 
 #[derive(Deserialize)]
@@ -37,7 +37,7 @@ pub(super) async fn login(
     let Some(hash) = app.admin_hash.clone() else {
         return Err(Reject::NotFound);
     };
-    let ctx = Ctx::visitor(&app.wallet.network);
+    let ctx = Ctx::visitor(&app.wallet);
     if !app.allow("operator-login", &ip.key(), app.rate.login_per_ip_per_minute, MINUTE) {
         return Ok(pages::admin_login(&ctx, Some("Too many attempts. Wait a minute.")).into_response());
     }
@@ -128,7 +128,7 @@ pub(super) async fn dashboard(
         notice: notice(&query),
         protections,
     };
-    Ok(pages::admin_dashboard(&Ctx::operator(&app.wallet.network, &operator.csrf), &page).into_response())
+    Ok(pages::admin_dashboard(&Ctx::operator(&app.wallet, &operator.csrf), &page).into_response())
 }
 
 #[derive(Deserialize)]

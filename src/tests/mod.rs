@@ -1,6 +1,7 @@
 //! Integration tests: the wallet, ledger, LNURL endpoints, and web flows
 //! against a real SQLite database and an in-memory LND.
 
+mod browser;
 mod handoff_flows;
 mod ledger;
 mod lnurl_endpoints;
@@ -80,7 +81,13 @@ pub(crate) async fn harness_with(adjust: impl FnOnce(&mut Config)) -> Harness {
     config.validate().unwrap();
     let (db, dir) = test_db().await;
     let lnd = MockLnd::new("signet");
-    let mut wallet = Wallet::new(db, lnd.clone(), "signet".into(), &config, Url::parse(ORIGIN).unwrap());
+    let mut wallet = Wallet::new(
+        db,
+        lnd.clone(),
+        "signet".into(),
+        &config,
+        Url::parse(&config.server.public_url).unwrap(),
+    );
     wallet.send_wait = Duration::from_secs(5);
     let wallet = Arc::new(wallet);
     let admin = auth::hash_password("operator password").unwrap();
@@ -124,6 +131,7 @@ impl Harness {
             destination: destination.to_owned(),
             amount_msat: amount_sat.map(|sats| sats * 1000),
             comment: String::new(),
+            max_fee_msat: None,
         }
     }
 

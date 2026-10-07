@@ -121,7 +121,7 @@ async fn a_deep_link_survives_the_login_and_pays_only_after_a_tap() {
     assert!(page.body.contains("2,100 sats"), "{}", page.body);
     assert!(page.body.contains("external"), "the description shows");
     assert!(page.body.contains(&bolt11), "the field holds the invoice");
-    assert!(page.body.contains(">Pay</button>"));
+    assert!(page.body.contains("Review payment"));
     assert!(page.body.contains("data-scan=\"send-to\""), "Send offers the scanner");
     assert!(h.lnd.lock().sends.is_empty(), "opening a link never pays");
 
@@ -168,12 +168,12 @@ async fn deep_links_prefill_addresses_and_show_send_errors() {
         ("lnbc10u1pmainnet", "That is a mainnet invoice."),
         ("lntbs10u1punknown", "Could not read that invoice."),
         (expired, "That invoice has expired."),
-        ("not-a-thing", "does not look like a Lightning invoice or address"),
+        ("not-a-thing", "does not look like a Lightning payment request"),
     ] {
         let page = get(&h.app, &format!("/launch/lightning/{target}"), Some(&cookie)).await;
         assert_eq!(page.status, StatusCode::OK);
         assert!(page.body.contains(message), "{target}: {}", page.body);
-        assert!(page.body.contains(">Send</button>"), "no Pay button for {target}");
+        assert!(page.body.contains("Review payment"), "no review button for {target}");
     }
     assert!(h.lnd.lock().sends.is_empty());
 }

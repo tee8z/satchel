@@ -48,14 +48,14 @@ pub(super) async fn home(State(app): State<Shared>, headers: HeaderMap) -> Resul
     if UserSession::from_headers(&app, &headers).await?.is_some() {
         return Ok(redirect("/wallet"));
     }
-    Ok(pages::landing(&Ctx::visitor(&app.wallet.network), &app.wallet.domain).into_response())
+    Ok(pages::landing(&Ctx::visitor(&app.wallet), &app.wallet.domain).into_response())
 }
 
 pub(super) async fn signup_page(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Reject> {
     if UserSession::from_headers(&app, &headers).await?.is_some() {
         return Ok(redirect("/wallet"));
     }
-    Ok(pages::signup(&Ctx::visitor(&app.wallet.network), &app.wallet.domain, None, "").into_response())
+    Ok(pages::signup(&Ctx::visitor(&app.wallet), &app.wallet.domain, None, "").into_response())
 }
 
 #[derive(Deserialize)]
@@ -81,7 +81,7 @@ pub(super) async fn signup(
     ip: ClientIp,
     Form(form): Form<SignupForm>,
 ) -> Result<Response, Reject> {
-    let ctx = Ctx::visitor(&app.wallet.network);
+    let ctx = Ctx::visitor(&app.wallet);
     let pending = match form.handoff.as_str() {
         "" => None,
         token => match app.wallet.db.pending_handoff(token, Purpose::SignUp).await? {
@@ -192,7 +192,7 @@ pub(super) async fn login_page(
     if UserSession::from_headers(&app, &headers).await?.is_some() {
         return Ok(redirect(&next));
     }
-    Ok(pages::login(&Ctx::visitor(&app.wallet.network), None, "", &next).into_response())
+    Ok(pages::login(&Ctx::visitor(&app.wallet), None, "", &next).into_response())
 }
 
 #[derive(Deserialize)]
@@ -209,7 +209,7 @@ pub(super) async fn login(
     ip: ClientIp,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, Reject> {
-    let ctx = Ctx::visitor(&app.wallet.network);
+    let ctx = Ctx::visitor(&app.wallet);
     let next = safe_next(&form.next);
     let retry = |message: &str| pages::login(&ctx, Some(message), &form.username, &next).into_response();
     let username = form.username.trim().to_ascii_lowercase();
@@ -431,7 +431,7 @@ async fn render_wallet(app: &App, session: &UserSession, sections: Sections) -> 
         send,
         faucet,
     };
-    Ok(pages::wallet(&Ctx::member(&wallet.network, session), &page))
+    Ok(pages::wallet(&Ctx::member(wallet, session), &page))
 }
 
 /// The fragment for htmx (with fresh balance and history when money moved),
@@ -541,6 +541,91 @@ pub(super) struct SendForm {
     amount_sat: String,
     #[serde(default)]
     comment: String,
+    #[serde(default)]
+    max_fee_msat: Option<u64>,
+}
+
+impl SendForm {
+    fn values(&self) -> SendValues<'_> {
+        SendValues {
+            destination: &self.destination,
+            amount: &self.amount_sat,
+            comment: &self.comment,
+            ..SendValues::default()
+        }
+    }
+}
+
+pub(super) async fn review_send(
+    State(app): State<Shared>,
+    session: UserSession,
+    headers: HeaderMap,
+    Form(form): Form<SendForm>,
+) -> Result<Response, Reject> {
+    check_csrf(&session.csrf, &form.csrf)?;
+    let amount = form.amount_sat.trim();
+    let result = if !app.allow(
+        "review",
+        &session.account.id.to_string(),
+        app.rate.send_per_account_per_minute,
+        MINUTE,
+    ) {
+        Err(WalletError::invalid("Too many payment checks. Wait a minute."))
+    } else if !amount.is_empty() && msat_from_sats(amount).is_none() {
+        Err(WalletError::invalid("Enter a whole number of sats."))
+    } else {
+        app.wallet
+            .preview(
+                &session.account,
+                &PayRequest {
+                    request_key: form.key.clone(),
+                    destination: form.destination.clone(),
+                    amount_msat: msat_from_sats(amount),
+                    comment: form.comment.clone(),
+                    max_fee_msat: None,
+                },
+            )
+            .await
+    };
+    let values = form.values();
+    let section = match result {
+        Ok(preview) => pages::send_review(&session.csrf, &form.key, &values, &preview, &app.wallet.network_name),
+        Err(error) => pages::send_section(&session.csrf, &form.key, &values, Some(Err(&shown(&error)))),
+    };
+    respond(
+        &app,
+        &session,
+        &headers,
+        section,
+        |send| Sections {
+            send: Some(send),
+            ..Sections::default()
+        },
+        false,
+    )
+    .await
+}
+
+pub(super) async fn edit_send(
+    State(app): State<Shared>,
+    session: UserSession,
+    headers: HeaderMap,
+    Form(form): Form<SendForm>,
+) -> Result<Response, Reject> {
+    check_csrf(&session.csrf, &form.csrf)?;
+    let section = pages::send_section(&session.csrf, &form.key, &form.values(), None);
+    respond(
+        &app,
+        &session,
+        &headers,
+        section,
+        |send| Sections {
+            send: Some(send),
+            ..Sections::default()
+        },
+        false,
+    )
+    .await
 }
 
 pub(super) async fn send(
@@ -562,6 +647,7 @@ pub(super) async fn send(
             destination: form.destination.clone(),
             amount_msat: msat_from_sats(amount),
             comment: form.comment.clone(),
+            max_fee_msat: form.max_fee_msat,
         };
         app.wallet.pay(&session.account, request).await
     };
@@ -648,7 +734,7 @@ fn render_settings(app: &App, session: &UserSession, message: Option<Result<&str
         csrf: &session.csrf,
         message,
     };
-    pages::settings(&Ctx::member(&app.wallet.network, session), &page)
+    pages::settings(&Ctx::member(&app.wallet, session), &page)
 }
 
 pub(super) async fn settings_page(State(app): State<Shared>, session: UserSession) -> Response {

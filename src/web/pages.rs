@@ -12,10 +12,26 @@ use crate::ledger::{Invoice, Payment};
 use crate::lnd::NodeBalances;
 use crate::qr;
 use crate::util::{format_msat, format_time, now};
-use crate::wallet::Faucet;
+use crate::wallet::{Faucet, PaymentPreview, Wallet};
 
 /// htmx sends requests to this origin only and leaves styling to our stylesheet.
 const HTMX_CONFIG: &str = r#"{"mode":"same-origin","defaultTimeout":35000,"includeIndicatorCSS":false}"#;
+
+fn icon(name: &str) -> Markup {
+    let path = match name {
+        "lightning" => "m13 2-8 12h6l-1 8 9-12h-7z",
+        "arrow-right" => "M5 12h14m-6-6 6 6-6 6",
+        "send" => "M6 18 18 6M6 6h12v12",
+        "receive" => "M18 6 6 18M6 6v12h12",
+        _ => "M3 12h4l3-8 4 16 3-8h4",
+    };
+    html! {
+        svg.ui-icon xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
+            path d=(path) {}
+        }
+    }
+}
 
 pub(crate) enum Nav<'a> {
     Visitor,
@@ -25,20 +41,23 @@ pub(crate) enum Nav<'a> {
 
 pub(crate) struct Ctx<'a> {
     pub(crate) network: &'a str,
+    pub(crate) recovery_url: Option<&'a str>,
     pub(crate) nav: Nav<'a>,
 }
 
 impl<'a> Ctx<'a> {
-    pub(crate) fn visitor(network: &'a str) -> Self {
+    pub(crate) fn visitor(wallet: &'a Wallet) -> Self {
         Self {
-            network,
+            network: &wallet.network_name,
+            recovery_url: wallet.recovery_url.as_deref(),
             nav: Nav::Visitor,
         }
     }
 
-    pub(crate) fn member(network: &'a str, session: &'a UserSession) -> Self {
+    pub(crate) fn member(wallet: &'a Wallet, session: &'a UserSession) -> Self {
         Self {
-            network,
+            network: &wallet.network_name,
+            recovery_url: wallet.recovery_url.as_deref(),
             nav: Nav::Member {
                 username: &session.account.username,
                 csrf: &session.csrf,
@@ -46,9 +65,10 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    pub(crate) fn operator(network: &'a str, csrf: &'a str) -> Self {
+    pub(crate) fn operator(wallet: &'a Wallet, csrf: &'a str) -> Self {
         Self {
-            network,
+            network: &wallet.network_name,
+            recovery_url: wallet.recovery_url.as_deref(),
             nav: Nav::Operator { csrf },
         }
     }
@@ -68,14 +88,15 @@ pub(crate) fn layout(ctx: &Ctx<'_>, title: &str, content: Markup) -> Markup {
                 link rel="manifest" href=(assets::url("manifest.webmanifest"));
                 link rel="icon" type="image/svg+xml" href=(assets::url("icon.svg"));
                 link rel="apple-touch-icon" href=(assets::url("apple-touch-icon.png"));
-                meta name="theme-color" content="#6b3fd4";
+                meta name="theme-color" content="#080d17";
                 script src=(assets::url("htmx.min.js")) defer {}
                 script src=(assets::url("app.js")) defer {}
             }
-            body {
+            body class=(if matches!(ctx.nav, Nav::Operator { .. }) { "operator-page" } else { "wallet-site" }) {
+                a.skip-link href="#main" { "Skip to content" }
                 div.banner role="note" {
                     strong { "Test network only (" (ctx.network) ")." }
-                    " Not for real bitcoin: custodial, unaudited test software."
+                    span { " Test sats. No real bitcoin." }
                 }
                 header.top {
                     a.brand href="/" { (APP_NAME) }
@@ -86,8 +107,8 @@ pub(crate) fn layout(ctx: &Ctx<'_>, title: &str, content: Markup) -> Markup {
                                 a href="/signup" { "Sign up" }
                             }
                             Nav::Member { username, csrf } => {
-                                a href="/wallet" { "Wallet" }
-                                a href="/settings" title=(username) { "Settings" }
+                                a href="/wallet" aria-current=[(title == "Wallet").then_some("page")] { "Wallet" }
+                                a href="/settings" title=(username) aria-current=[(title == "Settings").then_some("page")] { "Settings" }
                                 form.inline method="post" action="/logout" {
                                     input type="hidden" name="csrf" value=(csrf);
                                     button.link type="submit" { "Log out" }
@@ -103,9 +124,13 @@ pub(crate) fn layout(ctx: &Ctx<'_>, title: &str, content: Markup) -> Markup {
                         }
                     }
                 }
-                main { (content) }
+                main #main { (content) }
                 footer {
-                    "Balances are test sats with no value. Never send real bitcoin to this wallet."
+                    p { "Custodial test wallet · Test sats have no value." }
+                    p { "Unaudited software. Never send real bitcoin." }
+                    @if let Some(url) = ctx.recovery_url {
+                        a href=(url) { "Recover 5day4cast entries" }
+                    }
                 }
             }
         }
@@ -128,19 +153,23 @@ pub(crate) fn landing(ctx: &Ctx<'_>, domain: &str) -> Markup {
         ctx,
         "Test wallet",
         html! {
-            h1 { "A Lightning wallet for test networks" }
-            p {
-                "Get a wallet and a Lightning Address on " strong { (ctx.network) } " in seconds: pay invoices "
-                "from apps you are testing, and receive payouts or refunds at " code { "you@" (domain) } "."
-            }
-            ul.warnings {
-                li { "Test sats only. This server refuses to start on Bitcoin mainnet." }
-                li { "Custodial: the operator's Lightning node holds every balance." }
-                li { "Not audited. Never send real bitcoin here." }
-            }
-            p.actions {
-                a.button href="/signup" { "Create a wallet" }
-                a.button.secondary href="/login" { "Log in" }
+            section.landing {
+                div.hero-icon aria-hidden="true" { (icon("lightning")) }
+                p.network-badge { span.status-dot {} (ctx.network) }
+                h1 { "Test sats. Real possibilities." }
+                p.lead {
+                    "Your Lightning wallet for " strong { (ctx.network) } ". "
+                    "Pay invoices, try apps, and receive payouts—all from your browser."
+                }
+                div.address-preview {
+                    span.eyebrow { "A Lightning Address of your own" }
+                    code { "you@" (domain) }
+                }
+                div.hero-actions {
+                    a.button href="/signup" { "Create a wallet" (icon("arrow-right")) }
+                    a.button.secondary href="/login" { "Log in" }
+                    p.muted { "Use a password or your Nostr signer." }
+                }
             }
         },
     )
@@ -247,7 +276,7 @@ pub(crate) fn login(ctx: &Ctx<'_>, error: Option<&str>, username: &str, next: &s
 
 pub(crate) fn balance(balance_msat: i64, out_of_band: bool) -> Markup {
     html! {
-        span #balance hx-swap-oob=[out_of_band.then_some("true")] { (format_msat(balance_msat)) " sats" }
+        span #balance hx-swap-oob=[out_of_band.then_some("true")] { (format_msat(balance_msat)) " " span.balance-unit { "sats" } }
     }
 }
 
@@ -272,9 +301,13 @@ fn describe(payment: &Payment) -> String {
 pub(crate) fn history(payments: &[Payment], out_of_band: bool) -> Markup {
     html! {
         section.card #history hx-swap-oob=[out_of_band.then_some("true")] {
-            h2 { "History" }
+            h2 { "Activity" }
             @if payments.is_empty() {
-                p.muted { "No payments yet." }
+                div.empty-state {
+                    (icon("activity"))
+                    p { "Your first payment starts here" }
+                    p.muted { "Send or receive test sats to see your activity." }
+                }
             } @else {
                 ul.history {
                     @for payment in payments {
@@ -314,7 +347,7 @@ pub(crate) enum ReceiveState<'a> {
 pub(crate) fn receive_section(csrf: &str, state: &ReceiveState<'_>) -> Markup {
     html! {
         section.card #receive {
-            h2 { "Receive" }
+            h2 { "Receive sats" }
             @match state {
                 ReceiveState::Form { error, amount, memo } => {
                     form method="post" action="/wallet/receive" hx-post="/wallet/receive" hx-target="#receive"
@@ -380,30 +413,80 @@ pub(crate) fn send_section(
     values: &SendValues<'_>,
     result: Option<Result<&Payment, &str>>,
 ) -> Markup {
+    if let Some(Ok(payment)) = result {
+        return html! {
+            section.card.payment-review #send {
+                p.eyebrow { "Your payment" }
+                h2.review-amount { (format_msat(payment.amount_msat)) " " span { "sats" } }
+                (payment_status(payment))
+                a.button.secondary href="/wallet" { "Back to wallet" }
+            }
+        };
+    }
     html! {
         section.card #send {
-            h2 { "Send" }
+            h2 { "Send sats" }
             @if let Some(details) = &values.details { (details) }
-            form method="post" action="/wallet/send" hx-post="/wallet/send" hx-target="#send" hx-swap="outerHTML"
+            p.muted { "Paste a payment request. You’ll review the details before sending." }
+            form method="post" action="/wallet/send/review" hx-post="/wallet/send/review" hx-target="#send" hx-swap="outerHTML"
                 hx-disable="find button" {
                 input type="hidden" name="csrf" value=(csrf);
                 input type="hidden" name="key" value=(key);
-                label for="send-to" { "Invoice, Lightning Address, or LNURL" }
+                label for="send-to" { "To" }
                 textarea #send-to name="destination" rows="3" required autocapitalize="none" spellcheck="false" {
                     (values.destination)
                 }
                 (scanner("send-to"))
-                label for="send-amount" { "Amount (sats; for addresses and invoices without an amount)" }
-                input #send-amount name="amount_sat" inputmode="numeric" value=(values.amount);
-                label for="send-comment" { "Comment for an address (optional)" }
+                p.muted.field-help { "Lightning invoice, name@example.com, or LNURL" }
+                label for="send-amount" { "Amount (sats)" }
+                input #send-amount name="amount_sat" inputmode="numeric" value=(values.amount) placeholder="Enter an amount" aria-describedby="amount-help";
+                p.muted.field-help #amount-help { "Leave blank when the invoice already includes an amount." }
+                label for="send-comment" { "Note to recipient (optional)" }
                 input #send-comment name="comment" maxlength="140" value=(values.comment);
-                button type="submit" { @if values.details.is_some() { "Pay" } @else { "Send" } }
-                p.muted { "A routing-fee budget is held while a payment is in flight; the unused part comes back." }
+                button type="submit" { "Review payment" (icon("arrow-right")) }
             }
             @match result {
                 Some(Ok(payment)) => { (payment_status(payment)) }
                 Some(Err(message)) => { p.error role="alert" { (message) } }
                 None => {}
+            }
+        }
+    }
+}
+
+pub(crate) fn send_review(
+    csrf: &str,
+    key: &str,
+    values: &SendValues<'_>,
+    preview: &PaymentPreview,
+    network: &str,
+) -> Markup {
+    let sats = |msat| format_msat(i64::try_from(msat).unwrap_or(i64::MAX));
+    html! {
+        section.card.payment-review #send {
+            p.eyebrow { "Review payment" }
+            h2.review-amount { (sats(preview.amount_msat)) " " span { "sats" } }
+            p.network-badge { span.status-dot {} (network) }
+            dl.review-details {
+                dt { "To" } dd { (preview.recipient) }
+                @if !preview.description.is_empty() { dt { "Note" } dd { (preview.description) } }
+                dt { "Maximum fee" } dd { (sats(preview.fee_limit_msat)) " sats" }
+                dt { "Maximum total" } dd.total { (sats(preview.amount_msat.saturating_add(preview.fee_limit_msat))) " sats" }
+            }
+            p.muted {
+                @if preview.fee_limit_msat == 0 { "No routing fee will be charged." }
+                @else { "The final fee may be lower. Any unused fee allowance stays in your balance." }
+            }
+            @for (action, label, secondary) in [("/wallet/send", "Confirm and send", false), ("/wallet/send/edit", "Edit payment", true)] {
+                form method="post" action=(action) hx-post=(action) hx-target="#send" hx-swap="outerHTML" hx-disable="find button" {
+                    input type="hidden" name="csrf" value=(csrf);
+                    input type="hidden" name="key" value=(key);
+                    input type="hidden" name="destination" value=(values.destination);
+                    input type="hidden" name="amount_sat" value=(values.amount);
+                    input type="hidden" name="comment" value=(values.comment);
+                    input type="hidden" name="max_fee_msat" value=(preview.fee_limit_msat);
+                    button.secondary[secondary] type="submit" { (label) }
+                }
             }
         }
     }
@@ -496,11 +579,19 @@ pub(crate) fn wallet(ctx: &Ctx<'_>, page: &WalletPage<'_>) -> Markup {
         ctx,
         "Wallet",
         html! {
+            div.page-heading {
+                h1 { "Your wallet" }
+                p.network-badge { span.status-dot {} (ctx.network) }
+            }
             section.card.summary {
-                p.label { "Balance" }
+                p.label { "Available balance" }
                 p.balance { (balance(page.balance_msat, false)) }
                 @if page.frozen {
                     p.error role="alert" { "This account is frozen: it cannot send or receive. Contact the operator." }
+                }
+                div.wallet-tabs hidden data-wallet-tabs aria-label="Wallet actions" {
+                    button type="button" #tab-send data-wallet-tab="send" { (icon("send")) "Send" }
+                    button.secondary type="button" #tab-receive data-wallet-tab="receive" { (icon("receive")) "Receive" }
                 }
                 p.label { "Your Lightning Address" }
                 p.address {
@@ -508,13 +599,13 @@ pub(crate) fn wallet(ctx: &Ctx<'_>, page: &WalletPage<'_>) -> Markup {
                     button.secondary type="button" data-copy=(page.address) { "Copy" }
                 }
                 details {
-                    summary { "Show a QR code for your address (LNURL)" }
+                    summary { "Show address QR code" }
                     (qr::svg(page.lnurl, "Lightning Address QR code"))
                     textarea.code readonly rows="3" aria-label="LNURL" { (page.lnurl) }
                 }
             }
-            (page.receive)
-            (page.send)
+            div.wallet-panel #panel-send data-wallet-panel="send" { (page.send) }
+            div.wallet-panel #panel-receive data-wallet-panel="receive" { (page.receive) }
             @if let Some(faucet) = &page.faucet { (faucet) }
             (history(page.history, false))
         },

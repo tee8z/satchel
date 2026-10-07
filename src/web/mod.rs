@@ -207,6 +207,8 @@ pub(crate) fn router(app: Shared) -> Router {
         .route("/wallet/receive", post(user::receive))
         .route("/wallet/invoice/{hash}", get(user::invoice_status))
         .route("/wallet/send", post(user::send))
+        .route("/wallet/send/review", post(user::review_send))
+        .route("/wallet/send/edit", post(user::edit_send))
         .route("/wallet/payment/{id}", get(user::payment_status))
         .route("/wallet/faucet", post(user::faucet))
         .route("/settings", get(user::settings_page))
@@ -268,7 +270,7 @@ async fn metrics(State(app): State<Shared>) -> Response {
 }
 
 async fn not_found(State(app): State<Shared>) -> Response {
-    let ctx = pages::Ctx::visitor(&app.wallet.network);
+    let ctx = pages::Ctx::visitor(&app.wallet);
     (StatusCode::NOT_FOUND, pages::not_found(&ctx)).into_response()
 }
 

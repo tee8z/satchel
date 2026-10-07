@@ -123,7 +123,7 @@ pub(super) fn refuse_blocked(app: &App, request: &Request, lnurl: bool, admin: b
         let body = serde_json::json!({ "error": "Requests from your network are blocked" });
         return Some((StatusCode::FORBIDDEN, Json(body)).into_response());
     }
-    let ctx = Ctx::visitor(&app.wallet.network);
+    let ctx = Ctx::visitor(&app.wallet);
     let page = pages::layout(
         &ctx,
         "Blocked",

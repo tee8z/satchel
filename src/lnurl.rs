@@ -70,6 +70,25 @@ pub(crate) fn parse_destination(input: &str) -> Result<Destination, WalletError>
     if value.is_empty() {
         return Err(WalletError::invalid("Paste an invoice or a Lightning Address."));
     }
+    if value.starts_with("lno1") {
+        return Err(WalletError::invalid(
+            "BOLT 12 offers are not supported yet. Ask for a Lightning invoice or Lightning Address.",
+        ));
+    }
+    if value.starts_with("bitcoin:")
+        || value.starts_with("bc1")
+        || value.starts_with("tb1")
+        || value.starts_with("bcrt1")
+    {
+        return Err(WalletError::invalid(
+            "This is an on-chain Bitcoin address. Satchel sends over Lightning; ask for a Lightning invoice or Lightning Address.",
+        ));
+    }
+    if value.starts_with('₿') {
+        return Err(WalletError::invalid(
+            "BIP-353 names are not supported yet. Ask for a Lightning invoice or Lightning Address.",
+        ));
+    }
     if let Some((user, domain)) = value.split_once('@') {
         let user_ok = (1..=64).contains(&user.len())
             && user
@@ -101,7 +120,7 @@ pub(crate) fn parse_destination(input: &str) -> Result<Destination, WalletError>
         return Ok(Destination::Invoice(value.to_owned()));
     }
     Err(WalletError::invalid(
-        "That does not look like a Lightning invoice or address.",
+        "That does not look like a Lightning payment request. Paste an invoice, an address such as name@example.com, or an LNURL.",
     ))
 }
 

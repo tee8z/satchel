@@ -97,7 +97,7 @@ pub(super) async fn start(
     headers: HeaderMap,
     Form(form): Form<HandoffForm>,
 ) -> Result<Response, Reject> {
-    let ctx = Ctx::visitor(&app.wallet.network);
+    let ctx = Ctx::visitor(&app.wallet);
     if !app.allow("handoff", &ip.key(), app.rate.login_per_ip_per_minute, MINUTE) {
         return Ok(refused(
             &ctx,
@@ -181,7 +181,7 @@ async fn signin_account(app: &App, pending: &Pending, ctx: &Ctx<'_>) -> Result<R
 /// cookies are visible. A trusted app's handoff signs in straight away when
 /// the browser is signed out or already in that wallet; anything else asks.
 pub(super) async fn resume(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Reject> {
-    let visitor = Ctx::visitor(&app.wallet.network);
+    let visitor = Ctx::visitor(&app.wallet);
     let Some(token) = cookie(&headers, &app.handoff_cookie()) else {
         return Ok(expired(&visitor));
     };
@@ -207,7 +207,7 @@ pub(super) async fn resume(State(app): State<Shared>, headers: HeaderMap) -> Res
         return finish(&app, &account, session.as_ref(), &pending.next).await;
     }
     let ctx = match &session {
-        Some(session) => Ctx::member(&app.wallet.network, session),
+        Some(session) => Ctx::member(&app.wallet, session),
         None => visitor,
     };
     Ok(confirmation(&ctx, &app, &account, &token, session.as_ref()).into_response())
@@ -256,7 +256,7 @@ pub(super) async fn confirm(
     headers: HeaderMap,
     Form(form): Form<ConfirmForm>,
 ) -> Result<Response, Reject> {
-    let visitor = Ctx::visitor(&app.wallet.network);
+    let visitor = Ctx::visitor(&app.wallet);
     let Some(pending) = app.wallet.db.take_pending_handoff(&form.token, Purpose::SignIn).await? else {
         return Ok(without_handoff_cookie(&app, expired(&visitor)));
     };

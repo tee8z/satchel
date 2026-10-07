@@ -138,6 +138,82 @@ async fn every_page_warns_that_this_is_a_test_network() {
 }
 
 #[tokio::test]
+async fn deployment_name_is_display_only_and_recovery_is_optional() {
+    let default = harness().await;
+    assert!(
+        !get(&default.app, "/", None)
+            .await
+            .body
+            .contains("Recover 5day4cast entries")
+    );
+    let h = harness_with(|config| {
+        config.server.network_name = Some("Mutinynet".into());
+        config.server.recovery_url = Some("/recover/".into());
+    })
+    .await;
+    let cookie = sign_up(&h.app, "alice").await;
+    for (uri, cookie) in [
+        ("/", None),
+        ("/login", None),
+        ("/wallet", Some(cookie.as_str())),
+        ("/settings", Some(cookie.as_str())),
+    ] {
+        let page = get(&h.app, uri, cookie).await;
+        assert!(page.body.contains("Mutinynet"), "{uri}");
+        assert!(page.body.contains("href=\"/recover/\""), "{uri}");
+        assert!(!page.body.contains("only (signet)"), "{uri}");
+    }
+    assert_eq!(h.wallet.network, "signet");
+    assert!(h.wallet.decode("lnbc100n1mainnet").await.is_err());
+}
+
+#[tokio::test]
+async fn review_does_not_pay_and_edit_preserves_input() {
+    let h = harness_with(|config| {
+        config.limits.fee_limit_ppm = 10_000;
+        config.limits.min_fee_limit_sat = 10;
+    })
+    .await;
+    let cookie = sign_up(&h.app, "alice").await;
+    let account = h.wallet.db.account_by_username("alice").await.unwrap().unwrap();
+    h.fund(&account, 2000).await;
+    let page = get(&h.app, "/wallet", Some(&cookie)).await;
+    let csrf = field(&page.body, "csrf");
+    let key = field(&page.body, "key");
+    let (invoice, _) = h.lnd.external_invoice(1_000_000, None);
+    let form = format!("csrf={csrf}&key={key}&destination={invoice}&amount_sat=&comment=hello");
+    let review = post(&h.app, "/wallet/send/review", Some(&cookie), &form, Some(SITE)).await;
+    assert_eq!(review.status, StatusCode::OK);
+    assert!(review.body.contains("Confirm and send"));
+    assert!(review.body.contains("1,010 sats"), "fee-inclusive total is shown");
+    assert_eq!(h.sats(&account).await, 2000);
+    assert!(h.lnd.lock().sends.is_empty());
+    let edit = post(&h.app, "/wallet/send/edit", Some(&cookie), &form, Some(SITE)).await;
+    assert!(edit.body.contains(&invoice));
+    assert!(edit.body.contains("value=\"hello\""));
+    assert!(!edit.body.contains("Confirm and send"));
+    assert!(h.lnd.lock().sends.is_empty());
+    let form = format!("{form}&max_fee_msat=5000");
+    let sent = post(&h.app, "/wallet/send", Some(&cookie), &form, Some(SITE)).await;
+    assert!(sent.body.contains("Sent 1,000 sats"));
+    assert_eq!(h.sats(&account).await, 1000);
+    assert_eq!(
+        h.lnd.lock().sends[0].fee_limit_msat,
+        5000,
+        "confirmation cannot raise the reviewed fee allowance"
+    );
+    post(&h.app, "/wallet/send", Some(&cookie), &form, Some(SITE)).await;
+    assert_eq!(h.lnd.lock().sends.len(), 1, "confirm retry cannot pay twice");
+    let bad = form.replace(&csrf, "invalid");
+    assert_eq!(
+        post(&h.app, "/wallet/send/review", Some(&cookie), &bad, Some(SITE))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+}
+
+#[tokio::test]
 async fn sign_up_log_in_and_use_the_wallet() {
     let h = harness().await;
     let cookie = sign_up(&h.app, "Alice").await;
@@ -185,7 +261,10 @@ async fn sign_up_log_in_and_use_the_wallet() {
         reply.body
     );
     assert!(!reply.body.contains("<html"), "htmx gets a fragment");
-    assert!(reply.body.contains("2,000 sats"), "the balance updates out of band");
+    assert!(
+        reply.body.contains("id=\"balance\" hx-swap-oob=\"true\">2,000 "),
+        "the balance updates out of band"
+    );
 
     // Log out, then back in.
     post(&h.app, "/logout", Some(&cookie), &format!("csrf={csrf}"), Some(SITE)).await;
