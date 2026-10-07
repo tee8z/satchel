@@ -106,6 +106,10 @@ setting can also be overridden with `SATCHEL_<SECTION>__<KEY>`, for example
 `SATCHEL_FAUCET__ENABLED=false`; values are read as TOML (numbers, booleans,
 arrays) and otherwise as strings, and are validated like the file.
 
+`/healthz` answers `200` with `{"status":"ok","database":true,"invoice_stream":...}`
+while the database responds, and `503` when it does not. Whether the LND
+invoice stream is connected is reported but does not fail the check.
+
 ## Configuration
 
 See [the complete example](example/config.toml.example). Amounts are in sats.
@@ -154,11 +158,12 @@ nix flake check
 
 ## Metrics
 
-`/metrics` (Prometheus text) reports totals only, never per-account labels:
-accounts, frozen accounts, liabilities, the node's local channel balance,
-pending payments, open invoices, faucet use, payment and invoice counters,
-sign-ups, failed logins, rate-limited requests, and whether the LND invoice
-stream is connected.
+`/metrics` (Prometheus text, every name prefixed `satchel_`) reports totals
+only, never per-account labels: accounts, frozen accounts, liabilities, the
+node's local channel balance, pending payments, open invoices, faucet use,
+payment and invoice counters, sign-ups, failed logins, rate-limited requests,
+and whether the LND invoice stream is connected (`satchel_invoice_stream_up`).
+A useful alert is `satchel_liabilities_msat > satchel_node_channel_local_msat`.
 
 ## Development
 
@@ -171,8 +176,8 @@ cargo test --locked
 The tests run against SQLite and an in-memory LND: exactly-once credits, no
 negative balances, idempotent requests, concurrent sends, refunds and
 reconciliation, internal transfers, the faucet limits, the LNURL endpoints,
-the mainnet refusal, Nostr login, CSRF and origin checks, and the operator
-pages.
+the mainnet refusal, Nostr login, CSRF and origin checks, environment
+overrides, `/healthz`, and the operator pages.
 
 Release archives come from the [release workflow](.github/workflows/release.yml),
 which runs only by `workflow_dispatch`.

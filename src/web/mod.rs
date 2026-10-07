@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -179,8 +180,21 @@ pub(crate) fn metrics_router(app: Shared) -> Router {
         .with_state(app)
 }
 
-async fn healthz() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok" }))
+/// 200 while the database answers; the LND invoice stream is reported but does not fail the check.
+async fn healthz(State(app): State<Shared>) -> Response {
+    let database = app.wallet.db.ping().await;
+    let invoice_stream = app.wallet.metrics.invoice_stream_up.load(Ordering::Relaxed);
+    let (status, state) = if database {
+        (StatusCode::OK, "ok")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "error")
+    };
+    let body = serde_json::json!({
+        "status": state,
+        "database": database,
+        "invoice_stream": invoice_stream,
+    });
+    (status, Json(body)).into_response()
 }
 
 async fn metrics(State(app): State<Shared>) -> Response {

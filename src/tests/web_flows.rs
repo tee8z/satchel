@@ -268,6 +268,17 @@ async fn responses_carry_security_headers() {
 }
 
 #[tokio::test]
+async fn healthz_reports_the_database_and_invoice_stream() {
+    let h = harness().await;
+    let reply = get(&h.app, "/healthz", None).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let body: Value = serde_json::from_str(&reply.body).unwrap();
+    assert_eq!(body["status"], "ok");
+    assert_eq!(body["database"], true);
+    assert_eq!(body["invoice_stream"], false);
+}
+
+#[tokio::test]
 async fn nostr_sign_up_log_in_and_link() {
     let h = harness().await;
     let challenge = post_json(&h.app, "/auth/nostr/challenge", &json!({})).await;
@@ -360,6 +371,11 @@ async fn the_operator_pages_need_their_own_password() {
     let page = get(&h.app, "/admin", Some(&operator)).await;
     assert!(page.body.contains("Liabilities"));
     assert!(page.body.contains("alice"));
+    // Node balances come from the reconciler, never from a call while the page loads.
+    assert!(page.body.contains("not read yet"));
+    h.wallet.reconcile().await;
+    let page = get(&h.app, "/admin", Some(&operator)).await;
+    assert!(page.body.contains("Node channel balance"), "{}", page.body);
     let csrf = field(&page.body, "csrf");
     let account = h.wallet.db.account_by_username("alice").await.unwrap().unwrap();
     let credit = post(

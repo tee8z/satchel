@@ -91,6 +91,14 @@ impl Db {
         Ok(Self { read, write })
     }
 
+    /// Whether the database answers a trivial query, for `/healthz`.
+    pub(crate) async fn ping(&self) -> bool {
+        sqlx::query_scalar::<_, i64>("SELECT 1")
+            .fetch_one(&self.read)
+            .await
+            .is_ok()
+    }
+
     /// A write transaction that holds the write lock from its first statement.
     pub(crate) async fn begin(&self) -> Result<Transaction<'static, Sqlite>, sqlx::Error> {
         self.write.begin_with("BEGIN IMMEDIATE").await

@@ -543,7 +543,8 @@ pub(crate) fn admin_login(ctx: &Ctx<'_>, error: Option<&str>) -> Markup {
 pub(crate) struct AdminPage<'a> {
     pub(crate) csrf: &'a str,
     pub(crate) totals: &'a Totals,
-    pub(crate) node: Option<NodeBalances>,
+    /// The node's balances and when they were read.
+    pub(crate) node: Option<(NodeBalances, i64)>,
     pub(crate) accounts: &'a [AccountSummary],
     pub(crate) search: &'a str,
     pub(crate) faucet: Faucet,
@@ -569,14 +570,16 @@ pub(crate) fn admin_dashboard(ctx: &Ctx<'_>, page: &AdminPage<'_>) -> Markup {
                     dt { "Accounts" } dd { (totals.accounts) " (" (totals.frozen_accounts) " frozen)" }
                     dt { "Liabilities (sum of balances)" } dd { (format_msat(totals.liabilities_msat)) " sats" }
                     @match page.node {
-                        Some(node) => {
+                        Some((node, read_at)) => {
                             @let cover = i64::try_from(node.channel_local_msat).unwrap_or(i64::MAX) - totals.liabilities_msat;
                             dt { "Node channel balance (local)" } dd { (sats(node.channel_local_msat)) " sats" }
                             dt { "Channel balance minus liabilities" }
                             dd.error[cover < 0] { (format_msat(cover)) " sats" }
                             dt { "Node on-chain (confirmed)" } dd { (format_msat(i64::try_from(node.onchain_confirmed_sat.saturating_mul(1000)).unwrap_or(i64::MAX))) " sats" }
+                            dt { "Node balances read" }
+                            dd.error[read_at < now() - 300] { (format_time(read_at)) }
                         }
-                        None => { dt { "Node balance" } dd.error { "unavailable" } }
+                        None => { dt { "Node balance" } dd.error { "not read yet (checked every minute)" } }
                     }
                     dt { "Pending payments" } dd { (totals.pending_payments) }
                     dt { "Open invoices" } dd { (totals.open_invoices) }

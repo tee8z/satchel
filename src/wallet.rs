@@ -14,7 +14,9 @@ use crate::config::Config;
 use crate::db::{Account, Db};
 use crate::error::WalletError;
 use crate::ledger::{Grant, Invoice, NewInvoice, NewSend, Payment, SendOutcome, Started, Transfer};
-use crate::lnd::{self, DecodedInvoice, InvoiceRequest, Lightning, LndInvoice, PaymentStatus, SendRequest};
+use crate::lnd::{
+    self, DecodedInvoice, InvoiceRequest, Lightning, LndInvoice, NodeBalances, PaymentStatus, SendRequest,
+};
 use crate::lnurl::{self, COMMENT_ALLOWED, Destination, LnurlClient};
 use crate::metrics::{Metrics, inc};
 use crate::util::{format_msat, now, sha256};
@@ -79,6 +81,8 @@ pub(crate) struct Wallet {
     pub(crate) send_wait: Duration,
     /// Payments a live task is still driving; reconciliation leaves them alone.
     in_flight: Mutex<HashSet<i64>>,
+    /// The node's balances and when the reconciler last read them, so pages never wait on LND.
+    node_balances: Mutex<Option<(NodeBalances, i64)>>,
 }
 
 fn truncate(text: &str, max: usize) -> String {
@@ -125,7 +129,13 @@ impl Wallet {
             metrics: Metrics::default(),
             send_wait: Duration::from_secs(20),
             in_flight: Mutex::default(),
+            node_balances: Mutex::default(),
         }
+    }
+
+    /// The node's balances as of the last reconciliation, with the time read.
+    pub(crate) fn cached_balances(&self) -> Option<(NodeBalances, i64)> {
+        *self.node_balances.lock().expect("balance lock is not poisoned")
     }
 
     pub(crate) fn address(&self, username: &str) -> String {
@@ -681,6 +691,7 @@ impl Wallet {
                     .node_channel_local_msat
                     .store(balances.channel_local_msat, Ordering::Relaxed);
                 self.metrics.node_balance_known.store(true, Ordering::Relaxed);
+                *self.node_balances.lock().expect("balance lock is not poisoned") = Some((balances, now()));
             }
             Err(error) => {
                 self.metrics.node_balance_known.store(false, Ordering::Relaxed);

@@ -101,10 +101,8 @@ pub(super) async fn dashboard(
 ) -> Result<Response, Reject> {
     let db = &app.wallet.db;
     let totals = db.totals().await?;
-    let node = tokio::time::timeout(Duration::from_secs(5), app.wallet.lnd.balances())
-        .await
-        .ok()
-        .and_then(Result::ok);
+    // The reconciler reads the node every minute; the page never waits on LND.
+    let node = app.wallet.cached_balances();
     let search = query.q.trim();
     let accounts = db.account_summaries(search, 200).await?;
     let page = pages::AdminPage {
