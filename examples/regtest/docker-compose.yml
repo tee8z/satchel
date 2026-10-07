@@ -1,0 +1,112 @@
+# Satchel on regtest: bitcoind, two LND nodes, and Satchel, on your machine.
+# Start it with ./setup.sh, which brings these services up, funds the nodes,
+# opens a channel, writes Satchel's credentials, and starts Satchel.
+#
+# UNTESTED in CI. Regtest only; nothing here is fit for a public server.
+
+name: satchel-regtest
+
+x-lnd-common: &lnd-common
+  image: lightninglabs/lnd:v0.21.4-beta
+  restart: unless-stopped
+  depends_on:
+    - bitcoind
+
+services:
+  bitcoind:
+    image: bitcoin/bitcoin:29.4
+    restart: unless-stopped
+    command:
+      - -regtest=1
+      - -printtoconsole=1
+      - -server=1
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=172.29.42.0/24
+      # User "satchel", password "satchel" (regtest only).
+      - -rpcauth=satchel:157a844ac7ea8edc98fb1372283f3196$$a4ca6719fd9f6ab128095b84b9d11282ec48f769cf7769a9d8c800372f3a345b
+      - -zmqpubrawblock=tcp://0.0.0.0:28332
+      - -zmqpubrawtx=tcp://0.0.0.0:28333
+      - -fallbackfee=0.0002
+    volumes:
+      - bitcoind:/home/bitcoin/.bitcoin
+    networks:
+      regtest:
+        ipv4_address: 172.29.42.10
+
+  # The node behind Satchel. Satchel's lnd.rest_host must be an IP address
+  # that LND's certificate covers, hence the fixed address and --tlsextraip.
+  lnd-wallet:
+    <<: *lnd-common
+    command:
+      - --alias=satchel-wallet
+      - --tlsextraip=172.29.42.11
+      - --noseedbackup
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=172.29.42.10:18443
+      - --bitcoind.rpcuser=satchel
+      - --bitcoind.rpcpass=satchel
+      - --bitcoind.zmqpubrawblock=tcp://172.29.42.10:28332
+      - --bitcoind.zmqpubrawtx=tcp://172.29.42.10:28333
+      - --listen=0.0.0.0:9735
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --trickledelay=1000
+    volumes:
+      - lnd-wallet:/root/.lnd
+    networks:
+      regtest:
+        ipv4_address: 172.29.42.11
+
+  # Another node on the network: it pays Satchel invoices and addresses and
+  # receives Satchel payments, like the apps you test.
+  lnd-peer:
+    <<: *lnd-common
+    command:
+      - --alias=peer
+      - --noseedbackup
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=172.29.42.10:18443
+      - --bitcoind.rpcuser=satchel
+      - --bitcoind.rpcpass=satchel
+      - --bitcoind.zmqpubrawblock=tcp://172.29.42.10:28332
+      - --bitcoind.zmqpubrawtx=tcp://172.29.42.10:28333
+      - --listen=0.0.0.0:9735
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --trickledelay=1000
+    volumes:
+      - lnd-peer:/root/.lnd
+    networks:
+      regtest:
+        ipv4_address: 172.29.42.12
+
+  satchel:
+    image: ${SATCHEL_IMAGE:-ghcr.io/tee8z/satchel:0.1.0}
+    restart: unless-stopped
+    depends_on:
+      - lnd-wallet
+    environment:
+      SATCHEL_CONFIG: /etc/satchel/satchel.toml
+    volumes:
+      # satchel.toml is in the repository; setup.sh writes the credentials.
+      - ./satchel:/etc/satchel:ro
+      - satchel-data:/data
+    ports:
+      - "127.0.0.1:8095:8095"
+    networks:
+      regtest:
+        ipv4_address: 172.29.42.20
+
+networks:
+  regtest:
+    ipam:
+      config:
+        - subnet: 172.29.42.0/24
+
+volumes:
+  bitcoind:
+  lnd-wallet:
+  lnd-peer:
+  satchel-data:

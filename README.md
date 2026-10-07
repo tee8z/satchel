@@ -65,13 +65,13 @@ channel between them, and Satchel with the faucet on, all on your machine:
 
 ```sh
 cd examples/regtest
-docker compose up -d
 ./setup.sh
 ```
 
-`setup.sh` mines blocks, funds and connects the nodes, bakes Satchel's
-macaroon, starts Satchel, and prints the URL to open, plus a command that
-pays your new Lightning Address from the second node.
+`setup.sh` starts the containers, mines blocks, funds and connects the
+nodes, bakes Satchel's macaroon, starts Satchel, and prints the URL to open.
+`./pay-address.sh <username> 1000` then pays your new Lightning Address from
+the second node. Docker with Compose v2 is all you need.
 
 ### Release binary
 
