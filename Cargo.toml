@@ -35,7 +35,7 @@ anyhow = { version = "=1.0.104" }
 bumpalo = { version = "=3.20.3", default-features = false } # blame: reqwest@0.13.4 -> wasm-bindgen@0.2.100 -> wasm-bindgen-macro@0.2.100 -> wasm-bindgen-macro-support@0.2.100 -> wasm-bindgen-backend@0.2.100 -> bumpalo@3.2.1 (RUSTSEC-2022-0078)
 bytes = { version = "=1.12.1", default-features = false } # blame: reqwest@0.13.4 -> bytes@1.7.1 (RUSTSEC-2026-0007)
 chrono = { version = "=0.4.45", default-features = false } # blame: image@0.25.9 -> moxcms@0.7.4 -> chrono@0.4.0 -> time@0.1.36 (RUSTSEC-2020-0159, RUSTSEC-2020-0071)
-cxx = { version = "=1.0.198" } # blame: image@0.25.9 -> moxcms@0.7.4 -> chrono@0.4.45 -> iana-time-zone@0.1.56 -> iana-time-zone-haiku@0.1.1 -> cxx@1.0.93 (RUSTSEC-2026-0202)
+cxx = { version = "=1.0.199" } # blame: image@0.25.9 -> moxcms@0.7.4 -> chrono@0.4.45 -> iana-time-zone@0.1.56 -> iana-time-zone-haiku@0.1.1 -> cxx@1.0.93 (RUSTSEC-2026-0202)
 lazy_static = { version = "=1.5.0" } # blame: tracing-subscriber@0.3.23 -> sharded-slab@0.1.4 -> lazy_static@1.0.0
 num-traits = { version = "=0.2.19" } # blame: image@0.25.9 -> moxcms@0.7.4 -> pxfm@0.1.1 -> num-traits@0.2.0
 url = { version = "=2.5.8", default-features = false } # blame: reqwest@0.13.4 -> url@2.4.0 -> idna@0.4.0 (RUSTSEC-2024-0421)
