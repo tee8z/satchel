@@ -12,3 +12,6 @@ config.toml
 *.db
 *.db-wal
 *.db-shm
+
+# Release archives for building the container image
+dist/
