@@ -45,6 +45,8 @@ pub(crate) struct AccountSummary {
     pub(crate) frozen: bool,
     pub(crate) created_at: i64,
     pub(crate) balance_msat: i64,
+    /// The client key the account was created from, when known.
+    pub(crate) signup_client: Option<String>,
 }
 
 /// Totals for the operator page and the metrics endpoint.
@@ -277,15 +279,19 @@ impl Db {
         .await
     }
 
-    /// Accounts by balance, optionally filtered by a username substring.
+    /// Accounts by balance, optionally filtered by a substring of the username
+    /// or of the address it signed up from.
     pub(crate) async fn account_summaries(&self, search: &str, limit: i64) -> Result<Vec<AccountSummary>, sqlx::Error> {
         sqlx::query_as::<_, AccountSummary>(
             "SELECT a.id, a.username, a.password_hash IS NOT NULL AS has_password, \
                a.nostr_pubkey IS NOT NULL AS has_nostr, a.frozen, a.created_at, \
-               COALESCE((SELECT SUM(l.amount_msat) FROM ledger l WHERE l.account_id = a.id), 0) AS balance_msat \
-             FROM accounts a WHERE ? = '' OR instr(a.username, ?) > 0 \
+               COALESCE((SELECT SUM(l.amount_msat) FROM ledger l WHERE l.account_id = a.id), 0) AS balance_msat, \
+               a.signup_client \
+             FROM accounts a \
+             WHERE ? = '' OR instr(a.username, ?) > 0 OR instr(COALESCE(a.signup_client, ''), ?) > 0 \
              ORDER BY balance_msat DESC, a.id LIMIT ?",
         )
+        .bind(search)
         .bind(search)
         .bind(search)
         .bind(limit)

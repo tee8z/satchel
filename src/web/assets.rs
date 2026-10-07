@@ -28,7 +28,7 @@ fn asset(name: &'static str, content_type: &'static str, body: &'static [u8]) ->
     }
 }
 
-static ASSETS: LazyLock<[Asset; 3]> = LazyLock::new(|| {
+static ASSETS: LazyLock<[Asset; 5]> = LazyLock::new(|| {
     [
         asset(
             "app.css",
@@ -44,6 +44,16 @@ static ASSETS: LazyLock<[Asset; 3]> = LazyLock::new(|| {
             "htmx.min.js",
             "text/javascript; charset=utf-8",
             include_bytes!("../../assets/vendor/htmx/4.0.0/htmx.min.js"),
+        ),
+        asset(
+            "pow-worker.js",
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../assets/pow-worker.js"),
+        ),
+        asset(
+            "sha256.js",
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../assets/sha256.js"),
         ),
     ]
 });

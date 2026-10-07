@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 use url::form_urlencoded;
 
-use super::web_flows::{Reply, event_json, field, get, post, read};
+use super::web_flows::{Reply, event_json, field, get, post, read, solved_pow};
 use super::{Harness, ORIGIN as SITE, harness, harness_with};
 use crate::auth;
 use crate::db::Account;
@@ -444,7 +444,13 @@ async fn a_new_key_creates_a_wallet_through_the_sign_up_form() {
     assert!(reserved.body.contains("reserved"));
     assert_eq!(field(&reserved.body, "handoff"), token);
 
-    let created = post(&h.app, "/signup", None, &form("nora"), Some(SITE)).await;
+    // Like every new wallet, it pays the proof of work.
+    let unsolved = post(&h.app, "/signup", None, &form("nora"), Some(SITE)).await;
+    assert!(unsolved.cookie.is_none(), "no wallet without the proof of work");
+    assert_eq!(field(&unsolved.body, "handoff"), token);
+    let (challenge, nonce) = solved_pow(&h.app).await;
+    let solved = format!("{}&pow_challenge={challenge}&pow_nonce={nonce}", form("nora"));
+    let created = post(&h.app, "/signup", None, &solved, Some(SITE)).await;
     assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
     assert_eq!(created.location.as_deref(), Some(next));
     assert!(created.cookie.unwrap().starts_with("__Host-session="));

@@ -2,7 +2,9 @@
 //! networks (Mutinynet, signet, testnet, regtest). It refuses to start on
 //! Bitcoin mainnet. Custodial and unaudited: never use it with real bitcoin.
 
+mod abuse;
 mod auth;
+mod blocklist;
 mod config;
 mod db;
 mod error;
@@ -12,6 +14,7 @@ mod lnd;
 mod lnurl;
 mod metrics;
 mod nostr;
+mod pow;
 mod qr;
 mod ratelimit;
 #[cfg(test)]
@@ -129,9 +132,14 @@ async fn run(path: &Path) -> Result<()> {
     let admin_hash = admin_hash(&config, &credentials_dir)?;
     let wallet = Arc::new(Wallet::new(db, lnd, network, &config, origin));
     let app = Arc::new(App::new(Arc::clone(&wallet), &config, admin_hash)?);
+    app.blocks
+        .reload(&wallet.db)
+        .await
+        .context("cannot load operator blocks")?;
 
     tokio::spawn(Arc::clone(&wallet).follow_invoices());
     tokio::spawn(Arc::clone(&wallet).reconcile_forever());
+    tokio::spawn(web::maintain_protections(Arc::clone(&app)));
 
     if let Some(address) = config.server.metrics_address {
         let listener = TcpListener::bind(address)

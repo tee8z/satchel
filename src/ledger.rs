@@ -97,8 +97,15 @@ pub(crate) struct Grant<'a> {
     pub(crate) request_key: &'a str,
     pub(crate) memo: &'a str,
     pub(crate) max_balance_msat: i64,
-    /// Rolling 24-hour faucet limits: (per account, global).
-    pub(crate) daily_limits: Option<(i64, i64)>,
+    pub(crate) daily_limits: Option<DailyLimits<'a>>,
+}
+
+/// Rolling 24-hour faucet limits, and the client address claiming.
+pub(crate) struct DailyLimits<'a> {
+    pub(crate) per_account: i64,
+    pub(crate) per_address: i64,
+    pub(crate) global: i64,
+    pub(crate) client: &'a str,
 }
 
 pub(crate) struct Transfer<'a> {
@@ -578,7 +585,7 @@ impl Db {
             return Ok(existing);
         }
         ensure_active(&mut tx, grant.account_id).await?;
-        if let Some((per_account, global)) = grant.daily_limits {
+        if let Some(limits) = &grant.daily_limits {
             let since = now() - 86_400;
             let (mine, everyone) = sqlx::query_as::<_, (i64, i64)>(
                 "SELECT COALESCE(SUM(CASE WHEN account_id = ? THEN amount_msat ELSE 0 END), 0), \
@@ -588,12 +595,25 @@ impl Db {
             .bind(since)
             .fetch_one(&mut *tx)
             .await?;
-            if mine + grant.amount_msat > per_account {
+            let network = sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(SUM(amount_msat), 0) FROM client_events \
+                 WHERE kind = 'faucet' AND client = ? AND created_at > ?",
+            )
+            .bind(limits.client)
+            .bind(since)
+            .fetch_one(&mut *tx)
+            .await?;
+            if mine + grant.amount_msat > limits.per_account {
                 return Err(WalletError::limit(
                     "You have used today's faucet allowance. Try again tomorrow.",
                 ));
             }
-            if everyone + grant.amount_msat > global {
+            if network + grant.amount_msat > limits.per_address {
+                return Err(WalletError::limit(
+                    "Your network has used today's faucet allowance. Try again tomorrow.",
+                ));
+            }
+            if everyone + grant.amount_msat > limits.global {
                 return Err(WalletError::limit(
                     "The faucet has given out today's sats. Try again tomorrow.",
                 ));
@@ -624,6 +644,18 @@ impl Db {
             &format!("payment:{id}:credit"),
         )
         .await?;
+        if let Some(limits) = &grant.daily_limits {
+            sqlx::query(
+                "INSERT INTO client_events (kind, client, account_id, amount_msat, created_at) \
+                 VALUES ('faucet', ?, ?, ?, ?)",
+            )
+            .bind(limits.client)
+            .bind(grant.account_id)
+            .bind(grant.amount_msat)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
+        }
         let payment = payment_by_id(&mut tx, id).await?;
         tx.commit().await?;
         Ok(payment)

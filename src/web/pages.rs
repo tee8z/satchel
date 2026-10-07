@@ -5,6 +5,7 @@ use maud::{DOCTYPE, Markup, html};
 
 use super::UserSession;
 use super::assets;
+use super::protect::pow_fields;
 use crate::APP_NAME;
 use crate::db::{AccountSummary, Totals};
 use crate::ledger::{Invoice, Payment};
@@ -204,6 +205,7 @@ pub(crate) fn signup_with(
                     label for="confirm" { "Repeat the password" }
                     input #confirm type="password" name="confirm" required minlength="10" autocomplete="new-password";
                 }
+                (pow_fields())
                 button type="submit" { "Create wallet" }
             }
             @if handoff.is_none() {
@@ -608,6 +610,8 @@ pub(crate) struct AdminPage<'a> {
     pub(crate) search: &'a str,
     pub(crate) faucet: Faucet,
     pub(crate) notice: Option<Result<&'a str, &'a str>>,
+    /// Blocks and the busiest client addresses.
+    pub(crate) protections: Markup,
 }
 
 pub(crate) fn admin_dashboard(ctx: &Ctx<'_>, page: &AdminPage<'_>) -> Markup {
@@ -646,21 +650,28 @@ pub(crate) fn admin_dashboard(ctx: &Ctx<'_>, page: &AdminPage<'_>) -> Markup {
                     dd {
                         @if page.faucet.enabled {
                             "On: " (sats(page.faucet.amount_msat)) " sats per grant, "
-                            (sats(page.faucet.per_account_daily_msat)) " per account and "
+                            (sats(page.faucet.per_account_daily_msat)) " per account, "
+                            (sats(page.faucet.per_address_daily_msat)) " per address and "
                             (sats(page.faucet.global_daily_msat)) " overall per 24 h; "
                             (format_msat(totals.faucet_last_day_msat)) " given in the last 24 h."
                         } @else { "Off" }
                     }
                 }
             }
+            (page.protections)
             form.search method="get" action="/admin" {
                 label for="q" { "Find accounts" }
-                input #q name="q" value=(page.search) placeholder="username";
+                input #q name="q" value=(page.search) placeholder="username or sign-up address";
                 button.secondary type="submit" { "Search" }
             }
             div.table {
                 table {
-                    thead { tr { th { "Account" } th { "Balance" } th { "Login" } th { "Created" } th { "Actions" } } }
+                    thead {
+                        tr {
+                            th { "Account" } th { "Balance" } th { "Login" } th { "Created" } th { "Signed up from" }
+                            th { "Actions" }
+                        }
+                    }
                     tbody {
                         @for account in page.accounts {
                             tr.frozen[account.frozen] {
@@ -671,6 +682,7 @@ pub(crate) fn admin_dashboard(ctx: &Ctx<'_>, page: &AdminPage<'_>) -> Markup {
                                     @if account.has_nostr { "nostr" }
                                 }
                                 td { (format_time(account.created_at)) }
+                                td { code { (account.signup_client.as_deref().unwrap_or("-")) } }
                                 td.actions {
                                     form.inline method="post" action=(format!("/admin/accounts/{}/freeze", account.id)) {
                                         input type="hidden" name="csrf" value=(page.csrf);

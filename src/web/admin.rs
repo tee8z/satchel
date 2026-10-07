@@ -8,7 +8,10 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use super::pages::{self, Ctx};
-use super::{ClientIp, OperatorHost, OperatorSession, Reject, Shared, check_csrf, redirect, redirect_with_cookie};
+use super::{
+    ClientIp, OperatorHost, OperatorSession, Reject, Shared, check_csrf, protect, redirect, redirect_with_cookie,
+};
+use crate::abuse;
 use crate::auth;
 use crate::error::WalletError;
 use crate::metrics::inc;
@@ -86,11 +89,19 @@ fn notice(query: &DashboardQuery) -> Option<Result<&'static str, &'static str>> 
         ("credit", _) => Some(Ok("Credit added.")),
         ("freeze", _) => Some(Ok("Account frozen.")),
         ("unfreeze", _) => Some(Ok("Account unfrozen.")),
+        ("block", _) => Some(Ok("Network blocked.")),
+        ("unblock", _) => Some(Ok("Block removed.")),
         (_, "amount") => Some(Err("Enter a whole number of sats above zero.")),
         (_, "limit") => Some(Err("Refused: the account would pass its balance limit.")),
         (_, "frozen") => Some(Err("Refused: the account is frozen.")),
         (_, "missing") => Some(Err("No such account.")),
         (_, "failed") => Some(Err("The credit failed. Check the logs.")),
+        (_, "cidr") => Some(Err(
+            "Enter an IPv4 or IPv6 network (CIDR) or address, no wider than /8 for IPv4 or /16 for IPv6.",
+        )),
+        (_, "hours") => Some(Err(
+            "Enter the expiry in whole hours, or leave it empty for a block that never expires.",
+        )),
         _ => None,
     }
 }
@@ -106,6 +117,7 @@ pub(super) async fn dashboard(
     let node = app.wallet.cached_balances();
     let search = query.q.trim();
     let accounts = db.account_summaries(search, 200).await?;
+    let protections = protect::operator_view(&app, &operator.csrf).await?;
     let page = pages::AdminPage {
         csrf: &operator.csrf,
         totals: &totals,
@@ -114,6 +126,7 @@ pub(super) async fn dashboard(
         search,
         faucet: app.wallet.faucet,
         notice: notice(&query),
+        protections,
     };
     Ok(pages::admin_dashboard(&Ctx::operator(&app.wallet.network, &operator.csrf), &page).into_response())
 }
@@ -134,6 +147,9 @@ pub(super) async fn freeze(
     let frozen = form.frozen == "1";
     if !app.wallet.db.set_frozen(id, frozen).await? {
         return Err(Reject::NotFound);
+    }
+    if frozen {
+        abuse::after_freeze(&app.wallet, id).await?;
     }
     tracing::info!(account = id, frozen, "operator changed an account");
     Ok(redirect(if frozen {

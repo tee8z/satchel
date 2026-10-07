@@ -9,6 +9,7 @@ use tower::ServiceExt;
 
 use super::{ORIGIN as SITE, harness, harness_with};
 use crate::nostr::tests::signed_event;
+use crate::pow;
 use crate::util::now;
 use crate::web::{self, Shared};
 
@@ -69,7 +70,7 @@ pub(super) async fn post(app: &Shared, uri: &str, cookie: Option<&str>, form: &s
     .await
 }
 
-async fn post_json(app: &Shared, uri: &str, body: &Value) -> Reply {
+pub(super) async fn post_json(app: &Shared, uri: &str, body: &Value) -> Reply {
     let request = Request::post(uri)
         .header(CONTENT_TYPE, "application/json")
         .header(ORIGIN, SITE)
@@ -85,8 +86,27 @@ pub(super) fn field(html: &str, name: &str) -> String {
     html[start..].split('"').next().unwrap().to_owned()
 }
 
-async fn sign_up(app: &Shared, username: &str) -> String {
-    let form = format!("username={username}&password=correct+horse+battery&confirm=correct+horse+battery");
+/// A proof-of-work challenge from the server and the nonce that solves it.
+pub(super) async fn solved_pow(app: &Shared) -> (String, u64) {
+    let reply = post_json(app, "/auth/pow", &json!({})).await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
+    let issued: Value = serde_json::from_str(&reply.body).unwrap();
+    let challenge = issued["challenge"].as_str().unwrap().to_owned();
+    let nonce = pow::solve(&challenge);
+    (challenge, nonce)
+}
+
+/// The sign-up form's fields, with a solved proof of work.
+pub(super) async fn sign_up_form(app: &Shared, username: &str) -> String {
+    let (challenge, nonce) = solved_pow(app).await;
+    format!(
+        "username={username}&password=correct+horse+battery&confirm=correct+horse+battery\
+         &pow_challenge={challenge}&pow_nonce={nonce}"
+    )
+}
+
+pub(super) async fn sign_up(app: &Shared, username: &str) -> String {
+    let form = sign_up_form(app, username).await;
     let reply = post(app, "/signup", None, &form, Some(SITE)).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.body);
     assert_eq!(reply.location.as_deref(), Some("/wallet"));
@@ -286,10 +306,17 @@ async fn nostr_sign_up_log_in_and_link() {
     let url = challenge["url"].as_str().unwrap();
     assert_eq!(url, "https://wallet.example.org/auth/nostr");
     let event = signed_event(3, url, challenge["challenge"].as_str().unwrap(), now());
+    let (pow_challenge, pow_nonce) = solved_pow(&h.app).await;
     let signup = post_json(
         &h.app,
         "/auth/nostr",
-        &json!({ "mode": "signup", "username": "nora", "event": event_json(&event) }),
+        &json!({
+            "mode": "signup",
+            "username": "nora",
+            "event": event_json(&event),
+            "pow_challenge": pow_challenge,
+            "pow_nonce": pow_nonce.to_string(),
+        }),
     )
     .await;
     assert!(signup.body.contains("/wallet"), "{}", signup.body);

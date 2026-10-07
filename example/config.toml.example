@@ -46,20 +46,39 @@ invoice_expiry_secs = 3600
 # Routing fee budget: 1% of the amount, at least 10 sats.
 fee_limit_ppm = 10_000
 min_fee_limit_sat = 10
+# Unpaid, unexpired invoices per account, counted separately for invoices the
+# owner creates and invoices payers request through the address.
+max_open_invoices = 100
 
 [faucet]
 # Off unless enabled. Grants are IOUs on the node's channel balance and are
 # refused once all balances together would exceed it.
 enabled = true
 amount_sat = 10_000
+# Rolling 24-hour caps. The per-address cap is shared by everyone behind one
+# address (a conference NAT), so size it for a crowd but below the global cap.
 per_account_daily_sat = 20_000
+per_address_daily_sat = 250_000
 global_daily_sat = 500_000
 
+# Limits per address are sized for a few hundred people behind one NAT; limits
+# per account stay tight; global caps bound the total. See docs/abuse-protection.md.
 [rate_limits]
-login_per_ip_per_minute = 10
+login_per_ip_per_minute = 120
 login_per_account_per_hour = 30
-signup_per_ip_per_hour = 5
-lnurl_per_ip_per_minute = 60
+signup_per_ip_per_hour = 300
+signups_global_per_hour = 1000
+lnurl_per_ip_per_minute = 600
 lnurl_per_account_per_minute = 30
 send_per_account_per_minute = 10
 receive_per_account_per_minute = 20
+# IPv6 clients count as one address per prefix of this length.
+ipv6_prefix_len = 56
+
+# Proof of work for creating accounts, solved in the browser. One more bit for
+# every step_signups accounts created in the last hour, up to max_bits.
+[pow]
+enabled = true
+base_bits = 18
+max_bits = 22
+step_signups = 200

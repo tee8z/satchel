@@ -13,7 +13,7 @@ use crate::auth::valid_request_key;
 use crate::config::Config;
 use crate::db::{Account, Db};
 use crate::error::WalletError;
-use crate::ledger::{Grant, Invoice, NewInvoice, NewSend, Payment, SendOutcome, Started, Transfer};
+use crate::ledger::{DailyLimits, Grant, Invoice, NewInvoice, NewSend, Payment, SendOutcome, Started, Transfer};
 use crate::lnd::{
     self, DecodedInvoice, InvoiceRequest, Lightning, LndInvoice, NodeBalances, PaymentStatus, SendRequest,
 };
@@ -36,6 +36,7 @@ pub(crate) struct Limits {
     pub(crate) invoice_expiry_secs: u32,
     pub(crate) fee_limit_ppm: u64,
     pub(crate) min_fee_limit_msat: u64,
+    pub(crate) max_open_invoices: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +44,7 @@ pub(crate) struct Faucet {
     pub(crate) enabled: bool,
     pub(crate) amount_msat: u64,
     pub(crate) per_account_daily_msat: u64,
+    pub(crate) per_address_daily_msat: u64,
     pub(crate) global_daily_msat: u64,
 }
 
@@ -116,11 +118,13 @@ impl Wallet {
                 invoice_expiry_secs: limits.invoice_expiry_secs,
                 fee_limit_ppm: limits.fee_limit_ppm,
                 min_fee_limit_msat: limits.min_fee_limit_sat * 1000,
+                max_open_invoices: limits.max_open_invoices,
             },
             faucet: Faucet {
                 enabled: config.faucet.enabled,
                 amount_msat: config.faucet.amount_sat * 1000,
                 per_account_daily_msat: config.faucet.per_account_daily_sat * 1000,
+                per_address_daily_msat: config.faucet.per_address_daily_sat * 1000,
                 global_daily_msat: config.faucet.global_daily_sat * 1000,
             },
             domain,
@@ -180,6 +184,10 @@ impl Wallet {
         if account.frozen {
             return Err(WalletError::Frozen);
         }
+        let source = if for_lnurl { "lnurl" } else { "wallet" };
+        if self.db.open_invoice_count(account.id, source).await? >= i64::from(self.limits.max_open_invoices) {
+            return Err(WalletError::TooManyInvoices);
+        }
         let Some((min, max)) = self.receivable(account).await? else {
             return Err(WalletError::limit("This wallet cannot receive more right now."));
         };
@@ -201,7 +209,6 @@ impl Wallet {
             warn!(%error, "LND did not create an invoice");
             WalletError::Unavailable
         })?;
-        let source = if for_lnurl { "lnurl" } else { "wallet" };
         let expires_at = now() + i64::from(self.limits.invoice_expiry_secs);
         let row = NewInvoice {
             payment_hash: &added.payment_hash,
@@ -555,8 +562,14 @@ impl Wallet {
         Ok(payment)
     }
 
-    /// Operator-funded test sats, within the faucet limits and the node's channel balance.
-    pub(crate) async fn faucet(&self, account: &Account, request_key: &str) -> Result<Payment, WalletError> {
+    /// Operator-funded test sats, within the faucet limits and the node's
+    /// channel balance. `client` is the claimant's rate-limit key.
+    pub(crate) async fn faucet(
+        &self,
+        account: &Account,
+        request_key: &str,
+        client: &str,
+    ) -> Result<Payment, WalletError> {
         if !self.faucet.enabled {
             return Err(WalletError::invalid("The faucet is turned off."));
         }
@@ -588,13 +601,18 @@ impl Wallet {
             request_key: &key,
             memo: "Test sats from the faucet",
             max_balance_msat: to_i64(self.limits.max_balance_msat),
-            daily_limits: Some((
-                to_i64(self.faucet.per_account_daily_msat),
-                to_i64(self.faucet.global_daily_msat),
-            )),
+            daily_limits: Some(DailyLimits {
+                per_account: to_i64(self.faucet.per_account_daily_msat),
+                per_address: to_i64(self.faucet.per_address_daily_msat),
+                global: to_i64(self.faucet.global_daily_msat),
+                client,
+            }),
         };
         let payment = self.db.grant(&grant).await?;
         inc(&self.metrics.faucet_grants);
+        self.metrics
+            .faucet_paid_msat
+            .fetch_add(self.faucet.amount_msat, Ordering::Relaxed);
         Ok(payment)
     }
 
