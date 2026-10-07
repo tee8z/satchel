@@ -8,33 +8,43 @@ let
       {
         system.stateVersion = "26.05";
         boot.isContainer = true;
-        services.koerier = {
+        services.satchel = {
           enable = true;
-          package = pkgs.writeShellScriptBin "koerier" "exit 0";
-          publicUrl = "https://lnurl.example.com";
-          nodes.thor = {
-            restHost = "127.0.0.1:8081";
-            tlsCertPath = "/run/lnd/thor/tls.cert";
-            invoiceMacaroonPath = "/run/lnd/thor/invoice.macaroon";
+          package = pkgs.writeShellScriptBin "satchel" "exit 0";
+          publicUrl = "https://wallet.example.org";
+          operatorUrl = "https://wallet-admin.example.org:9443";
+          metricsAddress = "127.0.0.1:9095";
+          adminPasswordHashFile = "/run/secrets/wallet-admin.hash";
+          lnd = {
+            restHost = "127.0.0.1:8080";
+            tlsCertPath = "/run/lnd/tls.cert";
+            macaroonPath = "/run/lnd/wallet.macaroon";
+            expectedNetwork = "signet";
+          };
+          faucet = {
+            enabled = true;
+            amount_sat = 5000;
           };
         };
       }
     ];
   };
   config = machine.config;
-  service = config.systemd.services.koerier.serviceConfig;
+  service = config.systemd.services.satchel.serviceConfig;
   configFile = nixpkgs.lib.last (nixpkgs.lib.splitString " " service.ExecStart);
 in
 assert nixpkgs.lib.all (item: item.assertion) config.assertions;
 assert service.DynamicUser;
+assert service.StateDirectory == "satchel";
 assert service.ProtectSystem == "strict";
 assert
   service.LoadCredential == [
-    "node-thor-tls:/run/lnd/thor/tls.cert"
-    "node-thor-invoice:/run/lnd/thor/invoice.macaroon"
+    "lnd-tls:/run/lnd/tls.cert"
+    "lnd-macaroon:/run/lnd/wallet.macaroon"
+    "admin-password-hash:/run/secrets/wallet-admin.hash"
   ];
 assert config.networking.firewall.allowedTCPPorts == [ ];
-pkgs.runCommand "koerier-module-check"
+pkgs.runCommand "satchel-module-check"
   {
     nativeBuildInputs = [ pkgs.python3 ];
   }
@@ -45,16 +55,22 @@ pkgs.runCommand "koerier-module-check"
 
     with open(sys.argv[1], "rb") as source:
         config = tomllib.load(source)
-    assert config["koerier"]["domain"] == "https://lnurl.example.com"
-    assert config["koerier"]["bind_address"] == "127.0.0.1:8090"
-    node = config["nodes"]["thor"]
-    assert node["rest_host"] == "127.0.0.1:8081"
-    assert node["tls_cert_path"] == "node-thor-tls"
-    assert node["invoice_macaroon_path"] == "node-thor-invoice"
-    assert node["min_invoice_amount"] == 1
-    assert node["max_invoice_amount"] == 1000000
-    assert node["invoice_expiry_sec"] == 600
-    assert "/run/lnd" not in str(config)
+    server = config["server"]
+    assert server["public_url"] == "https://wallet.example.org"
+    assert server["operator_url"] == "https://wallet-admin.example.org:9443"
+    assert server["bind_address"] == "127.0.0.1:8095"
+    assert server["database_path"] == "/var/lib/satchel/wallet.db"
+    assert server["metrics_address"] == "127.0.0.1:9095"
+    assert server["admin_password_hash_file"] == "admin-password-hash"
+    assert "client_ip_header" not in server
+    lnd = config["lnd"]
+    assert lnd["rest_host"] == "127.0.0.1:8080"
+    assert lnd["tls_cert_path"] == "lnd-tls"
+    assert lnd["macaroon_path"] == "lnd-macaroon"
+    assert lnd["expected_network"] == "signet"
+    assert config["faucet"] == {"enabled": True, "amount_sat": 5000}
+    assert config["limits"] == {}
+    assert "/run/" not in str(config)
     PY
     touch "$out"
   ''

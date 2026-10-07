@@ -7,3 +7,8 @@ Cargo.lock.backup
 *.cert
 *.macaroon
 config.toml
+
+# Local wallet databases
+*.db
+*.db-wal
+*.db-shm

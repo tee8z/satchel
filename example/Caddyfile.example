@@ -1,9 +1,14 @@
-ln.example.org {
-	@lnurl path /.well-known/lnurlp/* /lnurlp/*/callback
-	handle @lnurl {
-		header Access-Control-Allow-Origin "*"
-		header Cache-Control "no-store"
-		reverse_proxy 127.0.0.1:8090
-	}
-	respond 404
+# Public name: the wallet and every Lightning Address. /metrics and /healthz
+# live on their own private listener; the operator pages live on their own name.
+wallet.example.org {
+	@private path /healthz /metrics /admin /admin/*
+	respond @private 404
+	reverse_proxy 127.0.0.1:8095
+}
+
+# Operator name (server.operator_url), reachable only from your VPN.
+wallet-admin.example.org:9443 {
+	@outside not remote_ip 10.0.0.0/8
+	respond @outside 403
+	reverse_proxy 127.0.0.1:8095
 }
