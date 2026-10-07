@@ -35,8 +35,8 @@ pub(crate) struct Server {
     /// for example `x-forwarded-for` (the right-most entry is used).
     #[serde(default)]
     pub(crate) client_ip_header: Option<String>,
-    /// File with the operator's argon2 password hash (`koerier-wallet hash-password`).
-    /// `KOERIER_WALLET_ADMIN_PASSWORD_HASH` overrides it. No hash, no admin pages.
+    /// File with the operator's argon2 password hash (`satchel hash-password`).
+    /// `SATCHEL_ADMIN_PASSWORD_HASH` overrides it. No hash, no admin pages.
     #[serde(default)]
     pub(crate) admin_password_hash_file: Option<PathBuf>,
     /// Usernames nobody may register, on top of the built-in list.

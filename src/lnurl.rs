@@ -251,7 +251,7 @@ impl LnurlClient {
             .no_proxy()
             .timeout(self.timeout)
             .connect_timeout(self.timeout)
-            .user_agent(concat!("koerier-wallet/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("satchel/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|error| WalletError::Internal(error.into()))?;
         let mut response = client

@@ -6,7 +6,7 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "koerier-wallet";
+  pname = "satchel";
   version = (lib.importTOML ../Cargo.toml).package.version;
   src = lib.fileset.toSource {
     root = ../.;
@@ -30,12 +30,12 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "Multi-account Lightning wallet and Lightning Address server for test networks only";
-    homepage = "https://github.com/tee8z/koerier-wallet";
+    homepage = "https://github.com/tee8z/satchel";
     license = with lib.licenses; [
       mit
       asl20
     ];
-    mainProgram = "koerier-wallet";
+    mainProgram = "satchel";
     platforms = [
       "x86_64-linux"
       "aarch64-linux"

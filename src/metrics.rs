@@ -37,19 +37,19 @@ impl Metrics {
             }
         };
         metric(
-            "wallet_accounts",
+            "satchel_accounts",
             "gauge",
             "Accounts on this server.",
             &[("", totals.accounts as f64)],
         );
         metric(
-            "wallet_frozen_accounts",
+            "satchel_frozen_accounts",
             "gauge",
             "Frozen accounts.",
             &[("", totals.frozen_accounts as f64)],
         );
         metric(
-            "wallet_liabilities_msat",
+            "satchel_liabilities_msat",
             "gauge",
             "Sum of all account balances.",
             &[("", totals.liabilities_msat as f64)],
@@ -57,32 +57,32 @@ impl Metrics {
         if self.node_balance_known.load(Ordering::Relaxed) {
             let channel = load(&self.node_channel_local_msat);
             metric(
-                "wallet_node_channel_local_msat",
+                "satchel_node_channel_local_msat",
                 "gauge",
                 "Local channel balance of the LND node.",
                 &[("", channel as f64)],
             );
         }
         metric(
-            "wallet_pending_payments",
+            "satchel_pending_payments",
             "gauge",
             "Outgoing payments waiting for a final status.",
             &[("", totals.pending_payments as f64)],
         );
         metric(
-            "wallet_open_invoices",
+            "satchel_open_invoices",
             "gauge",
             "Unpaid invoices.",
             &[("", totals.open_invoices as f64)],
         );
         metric(
-            "wallet_faucet_last_day_msat",
+            "satchel_faucet_last_day_msat",
             "gauge",
             "Faucet credits in the last 24 hours.",
             &[("", totals.faucet_last_day_msat as f64)],
         );
         metric(
-            "wallet_payments_total",
+            "satchel_payments_total",
             "counter",
             "Payments by kind and outcome since start.",
             &[
@@ -101,7 +101,7 @@ impl Metrics {
             ],
         );
         metric(
-            "wallet_invoices_settled_total",
+            "satchel_invoices_settled_total",
             "counter",
             "Invoices paid over Lightning since start.",
             &[
@@ -110,31 +110,31 @@ impl Metrics {
             ],
         );
         metric(
-            "wallet_faucet_grants_total",
+            "satchel_faucet_grants_total",
             "counter",
             "Faucet grants since start.",
             &[("", load(&self.faucet_grants) as f64)],
         );
         metric(
-            "wallet_signups_total",
+            "satchel_signups_total",
             "counter",
             "Accounts created since start.",
             &[("", load(&self.signups) as f64)],
         );
         metric(
-            "wallet_login_failures_total",
+            "satchel_login_failures_total",
             "counter",
             "Failed logins since start.",
             &[("", load(&self.login_failures) as f64)],
         );
         metric(
-            "wallet_rate_limited_total",
+            "satchel_rate_limited_total",
             "counter",
             "Requests refused by rate limits since start.",
             &[("", load(&self.rate_limited) as f64)],
         );
         metric(
-            "wallet_invoice_stream_up",
+            "satchel_invoice_stream_up",
             "gauge",
             "Whether the LND invoice subscription is connected.",
             &[("", f64::from(u8::from(self.invoice_stream_up.load(Ordering::Relaxed))))],
@@ -159,10 +159,10 @@ mod tests {
             ..Totals::default()
         };
         let text = metrics.render(&totals);
-        assert!(text.contains("wallet_accounts 2\n"));
-        assert!(text.contains("wallet_liabilities_msat 21000\n"));
-        assert!(text.contains("wallet_node_channel_local_msat 50000\n"));
-        assert!(text.contains("wallet_payments_total{kind=\"lightning\",outcome=\"succeeded\"} 1\n"));
+        assert!(text.contains("satchel_accounts 2\n"));
+        assert!(text.contains("satchel_liabilities_msat 21000\n"));
+        assert!(text.contains("satchel_node_channel_local_msat 50000\n"));
+        assert!(text.contains("satchel_payments_total{kind=\"lightning\",outcome=\"succeeded\"} 1\n"));
         assert!(!text.contains("username"));
     }
 }

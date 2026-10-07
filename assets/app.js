@@ -1,4 +1,4 @@
-// Koerier Wallet: copy buttons and Nostr (NIP-07) login. Everything else is
+// Satchel: copy buttons and Nostr (NIP-07) login. Everything else is
 // server-rendered; htmx handles forms and status polling.
 "use strict";
 

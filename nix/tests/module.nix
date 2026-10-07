@@ -8,9 +8,9 @@ let
       {
         system.stateVersion = "26.05";
         boot.isContainer = true;
-        services.koerier-wallet = {
+        services.satchel = {
           enable = true;
-          package = pkgs.writeShellScriptBin "koerier-wallet" "exit 0";
+          package = pkgs.writeShellScriptBin "satchel" "exit 0";
           publicUrl = "https://wallet.example.org";
           metricsAddress = "127.0.0.1:9095";
           adminPasswordHashFile = "/run/secrets/wallet-admin.hash";
@@ -29,12 +29,12 @@ let
     ];
   };
   config = machine.config;
-  service = config.systemd.services.koerier-wallet.serviceConfig;
+  service = config.systemd.services.satchel.serviceConfig;
   configFile = nixpkgs.lib.last (nixpkgs.lib.splitString " " service.ExecStart);
 in
 assert nixpkgs.lib.all (item: item.assertion) config.assertions;
 assert service.DynamicUser;
-assert service.StateDirectory == "koerier-wallet";
+assert service.StateDirectory == "satchel";
 assert service.ProtectSystem == "strict";
 assert
   service.LoadCredential == [
@@ -43,7 +43,7 @@ assert
     "admin-password-hash:/run/secrets/wallet-admin.hash"
   ];
 assert config.networking.firewall.allowedTCPPorts == [ ];
-pkgs.runCommand "koerier-wallet-module-check"
+pkgs.runCommand "satchel-module-check"
   {
     nativeBuildInputs = [ pkgs.python3 ];
   }
@@ -57,7 +57,7 @@ pkgs.runCommand "koerier-wallet-module-check"
     server = config["server"]
     assert server["public_url"] == "https://wallet.example.org"
     assert server["bind_address"] == "127.0.0.1:8095"
-    assert server["database_path"] == "/var/lib/koerier-wallet/wallet.db"
+    assert server["database_path"] == "/var/lib/satchel/wallet.db"
     assert server["metrics_address"] == "127.0.0.1:9095"
     assert server["admin_password_hash_file"] == "admin-password-hash"
     assert "client_ip_header" not in server

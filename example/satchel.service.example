@@ -1,15 +1,15 @@
 [Unit]
-Description=koerier-wallet (test networks only)
+Description=Satchel (test networks only)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 DynamicUser=yes
-StateDirectory=koerier-wallet
-ExecStart=/usr/local/bin/koerier-wallet --config /etc/koerier-wallet/config.toml
+StateDirectory=satchel
+ExecStart=/usr/local/bin/satchel --config /etc/satchel/config.toml
 LoadCredential=tls.cert:/srv/lnd/tls.cert
 LoadCredential=wallet.macaroon:/srv/lnd/wallet.macaroon
-LoadCredential=admin-password.hash:/etc/koerier-wallet/admin-password.hash
+LoadCredential=admin-password.hash:/etc/satchel/admin-password.hash
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=yes

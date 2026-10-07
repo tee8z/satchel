@@ -12,14 +12,14 @@ let
     mkOption
     types
     ;
-  cfg = config.services.koerier-wallet;
+  cfg = config.services.satchel;
   toml = pkgs.formats.toml { };
   withoutNulls = lib.filterAttrs (_: value: value != null);
-  configFile = toml.generate "koerier-wallet.toml" {
+  configFile = toml.generate "satchel.toml" {
     server = withoutNulls {
       bind_address = cfg.listenAddress;
       public_url = cfg.publicUrl;
-      database_path = "/var/lib/koerier-wallet/wallet.db";
+      database_path = "/var/lib/satchel/wallet.db";
       metrics_address = cfg.metricsAddress;
       client_ip_header = cfg.clientIpHeader;
       admin_password_hash_file = if cfg.adminPasswordHashFile == null then null else "admin-password-hash";
@@ -42,13 +42,13 @@ let
   credentialPath = types.strMatching "/[^\n:]+";
 in
 {
-  options.services.koerier-wallet = {
-    enable = mkEnableOption "koerier-wallet, a multi-account Lightning wallet for test networks only";
+  options.services.satchel = {
+    enable = mkEnableOption "Satchel, a multi-account Lightning wallet for test networks only";
     package = mkOption {
       type = types.package;
       default = pkgs.callPackage ./package.nix { };
       defaultText = lib.literalExpression "pkgs.callPackage ./package.nix { }";
-      description = "koerier-wallet package to run.";
+      description = "Satchel package to run.";
     };
     listenAddress = mkOption {
       type = types.str;
@@ -75,7 +75,7 @@ in
     adminPasswordHashFile = mkOption {
       type = types.nullOr credentialPath;
       default = null;
-      description = "Runtime path to the operator's argon2id hash (koerier-wallet hash-password). Null disables /admin.";
+      description = "Runtime path to the operator's argon2id hash (satchel hash-password). Null disables /admin.";
     };
     reservedUsernames = mkOption {
       type = types.listOf types.str;
@@ -163,12 +163,12 @@ in
     assertions = [
       {
         assertion = builtins.match "https://[^/@?#]+/?" cfg.publicUrl != null;
-        message = "services.koerier-wallet.publicUrl must be an HTTPS origin without a path, query, or credentials.";
+        message = "services.satchel.publicUrl must be an HTTPS origin without a path, query, or credentials.";
       }
     ];
 
-    systemd.services.koerier-wallet = {
-      description = "koerier-wallet (test networks only)";
+    systemd.services.satchel = {
+      description = "Satchel (test networks only)";
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -182,7 +182,7 @@ in
         ]
         ++ lib.optional (cfg.adminPasswordHashFile != null) "admin-password-hash:${cfg.adminPasswordHashFile}";
         DynamicUser = true;
-        StateDirectory = "koerier-wallet";
+        StateDirectory = "satchel";
         StateDirectoryMode = "0700";
         Restart = "on-failure";
         RestartSec = "5s";

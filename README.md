@@ -1,6 +1,6 @@
-# koerier-wallet
+# Satchel
 
-> **Test networks only.** koerier-wallet is a custodial, unaudited wallet for
+> **Test networks only.** Satchel is a custodial, unaudited wallet for
 > Mutinynet, signet, testnet, and regtest. It refuses to start when its LND
 > node is on Bitcoin mainnet, and there is no flag to change that. Never use
 > it with real bitcoin.
@@ -14,7 +14,7 @@ SQLite ledger. Pages are server-rendered with [maud](https://maud.lambda.xyz)
 and [htmx](https://htmx.org); the only script is a small file for copy buttons
 and Nostr login.
 
-This project derives from [Koerier](https://github.com/tee8z/koerier), a
+Satchel is forked from [Koerier](https://github.com/tee8z/koerier), a
 Lightning Address server for LND (itself a fork of
 [luisschwab/koerier](https://github.com/luisschwab/koerier)), and keeps its
 history and its MIT OR Apache-2.0 licenses.
@@ -77,8 +77,8 @@ headers. `nix develop` provides them.
 ```sh
 cargo build --release --locked
 cp example/config.toml.example config.toml
-./target/release/koerier-wallet hash-password < operator-password.txt > admin-password.hash
-./target/release/koerier-wallet --config config.toml
+./target/release/satchel hash-password < operator-password.txt > admin-password.hash
+./target/release/satchel --config config.toml
 ```
 
 The LND macaroon needs exactly these permissions:
@@ -98,9 +98,9 @@ Put an HTTPS reverse proxy in front of the private listener (see
 client addresses. Keep `/metrics` and `/healthz` private; with
 `server.metrics_address` they get their own listener.
 
-Environment variables: `KOERIER_WALLET_CONFIG` (config path),
-`KOERIER_WALLET_ADMIN_PASSWORD_HASH` (operator hash, instead of a file),
-`KOERIER_WALLET_LOG_JSON=true` (JSON logs), and `RUST_LOG` (log filter).
+Environment variables: `SATCHEL_CONFIG` (config path),
+`SATCHEL_ADMIN_PASSWORD_HASH` (operator hash, instead of a file),
+`SATCHEL_LOG_JSON=true` (JSON logs), and `RUST_LOG` (log filter).
 
 ## Configuration
 
@@ -119,20 +119,20 @@ arrives for an existing invoice is always credited.
 
 ## NixOS
 
-The flake exports `packages.<system>.koerier-wallet` for `x86_64-linux` and
-`aarch64-linux`, and `nixosModules.default` (`services.koerier-wallet`).
+The flake exports `packages.<system>.satchel` for `x86_64-linux` and
+`aarch64-linux`, and `nixosModules.default` (`services.satchel`).
 
 ```nix
-services.koerier-wallet = {
+services.satchel = {
   enable = true;
   publicUrl = "https://wallet.example.org";
   clientIpHeader = "x-forwarded-for";
   metricsAddress = "127.0.0.1:9095";
-  adminPasswordHashFile = "/run/secrets/koerier-wallet-admin.hash";
+  adminPasswordHashFile = "/run/secrets/satchel-admin.hash";
   lnd = {
     restHost = "127.0.0.1:8080";
     tlsCertPath = "/var/lib/lnd/tls.cert";
-    macaroonPath = "/run/secrets/koerier-wallet.macaroon";
+    macaroonPath = "/run/secrets/satchel.macaroon";
     expectedNetwork = "signet";
   };
   faucet = { enabled = true; amount_sat = 10000; };
@@ -140,11 +140,11 @@ services.koerier-wallet = {
 ```
 
 Credentials stay host files loaded with systemd `LoadCredential`; the
-database lives in `/var/lib/koerier-wallet`. The module opens no firewall
+database lives in `/var/lib/satchel`. The module opens no firewall
 ports and configures no DNS or TLS.
 
 ```sh
-nix build .#koerier-wallet
+nix build .#satchel
 nix flake check
 ```
 

@@ -38,11 +38,11 @@ use crate::wallet::Wallet;
 use crate::web::App;
 
 /// The name shown in page titles and headers.
-pub(crate) const APP_NAME: &str = "Koerier Wallet";
+pub(crate) const APP_NAME: &str = "Satchel";
 
 #[derive(Parser)]
 #[command(
-    name = "koerier-wallet",
+    name = "satchel",
     version,
     about = "Multi-account Lightning wallet and Lightning Address server for test networks only"
 )]
@@ -50,11 +50,11 @@ struct Cli {
     #[arg(
         long,
         short = 'c',
-        env = "KOERIER_WALLET_CONFIG",
+        env = "SATCHEL_CONFIG",
         help = "Path to the TOML configuration file"
     )]
     config: Option<PathBuf>,
-    #[arg(long, env = "KOERIER_WALLET_LOG_JSON", help = "Write logs as JSON lines")]
+    #[arg(long, env = "SATCHEL_LOG_JSON", help = "Write logs as JSON lines")]
     log_json: bool,
     #[command(subcommand)]
     command: Option<Command>,
@@ -90,7 +90,7 @@ fn hash_password_from_stdin() -> Result<()> {
 
 /// The operator hash comes from the environment or a credential file.
 fn admin_hash(config: &Config, credentials_dir: &Path) -> Result<Option<String>> {
-    let hash = match std::env::var("KOERIER_WALLET_ADMIN_PASSWORD_HASH") {
+    let hash = match std::env::var("SATCHEL_ADMIN_PASSWORD_HASH") {
         Ok(hash) => Some(hash),
         Err(_) => config
             .server
@@ -148,7 +148,7 @@ async fn run(path: &Path) -> Result<()> {
     let listener = TcpListener::bind(config.server.bind_address)
         .await
         .context("cannot bind the HTTP listener")?;
-    info!(address = %listener.local_addr()?, domain = %wallet.domain, "koerier-wallet is listening");
+    info!(address = %listener.local_addr()?, domain = %wallet.domain, "satchel is listening");
     axum::serve(
         listener,
         web::router(app).into_make_service_with_connect_info::<SocketAddr>(),
@@ -165,7 +165,7 @@ async fn main() -> Result<()> {
     if let Some(Command::HashPassword) = cli.command {
         return hash_password_from_stdin();
     }
-    let config = cli.config.context("--config (or KOERIER_WALLET_CONFIG) is required")?;
+    let config = cli.config.context("--config (or SATCHEL_CONFIG) is required")?;
     run(&config).await
 }
 

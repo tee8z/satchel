@@ -1,4 +1,4 @@
-# koerier-wallet example for Mutinynet (signet). TEST NETWORKS ONLY:
+# Satchel example for Mutinynet (signet). TEST NETWORKS ONLY:
 # the server refuses to start if LND reports Bitcoin mainnet.
 
 [server]
@@ -6,13 +6,13 @@
 bind_address = "127.0.0.1:8095"
 # Public origin. Lightning Addresses are <username>@<this host>.
 public_url = "https://wallet.example.org"
-database_path = "/var/lib/koerier-wallet/wallet.db"
+database_path = "/var/lib/satchel/wallet.db"
 # Optional private listener for /metrics and /healthz (Prometheus).
 metrics_address = "127.0.0.1:9095"
 # The reverse proxy sets this header; the right-most address is the client.
 client_ip_header = "x-forwarded-for"
-# argon2id hash from `koerier-wallet hash-password`, relative to CREDENTIALS_DIRECTORY
-# or this file. KOERIER_WALLET_ADMIN_PASSWORD_HASH overrides it. Omit to disable /admin.
+# argon2id hash from `satchel hash-password`, relative to CREDENTIALS_DIRECTORY
+# or this file. SATCHEL_ADMIN_PASSWORD_HASH overrides it. Omit to disable /admin.
 admin_password_hash_file = "admin-password.hash"
 reserved_usernames = []
 session_days = 14
