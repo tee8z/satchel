@@ -277,6 +277,30 @@ async fn paying_another_accounts_invoice_stays_inside_the_ledger() {
 }
 
 #[tokio::test]
+async fn a_frozen_account_cannot_be_paid_internally() {
+    let h = harness().await;
+    let alice = h.account("alice").await;
+    let bob = h.account("bob").await;
+    h.fund(&alice, 10_000).await;
+    let invoice = h.wallet.create_invoice(&bob, 1_000_000, "", false).await.unwrap();
+    h.wallet.db.set_frozen(bob.id, true).await.unwrap();
+    let refused = h
+        .wallet
+        .pay(&alice, Harness::pay_request(&invoice.bolt11, None))
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("cannot receive"), "{refused}");
+    assert!(h.lnd.lock().canceled.is_empty(), "the invoice stays open in LND");
+    let by_address = h
+        .wallet
+        .pay(&alice, Harness::pay_request("bob@wallet.example.org", Some(1_000)))
+        .await
+        .unwrap_err();
+    assert!(by_address.to_string().contains("cannot receive"), "{by_address}");
+    assert_eq!((h.sats(&alice).await, h.sats(&bob).await), (10_000, 0));
+}
+
+#[tokio::test]
 async fn an_address_on_this_server_is_paid_directly() {
     let h = harness().await;
     let alice = h.account("alice").await;

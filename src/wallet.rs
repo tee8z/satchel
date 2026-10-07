@@ -487,8 +487,11 @@ impl Wallet {
             .db
             .account(invoice.account_id)
             .await?
-            .map(|recipient| self.address(&recipient.username))
-            .unwrap_or_default();
+            .ok_or(WalletError::NotFound)?;
+        if recipient.frozen {
+            return Err(WalletError::invalid("That account cannot receive payments right now."));
+        }
+        let recipient = self.address(&recipient.username);
         if let Err(error) = self.lnd.cancel_invoice(invoice.payment_hash.clone()).await {
             warn!(%error, "cannot cancel invoice for an internal payment");
             return Err(WalletError::invalid(
