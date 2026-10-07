@@ -2,7 +2,10 @@
 //! security plumbing shared by all of them.
 
 mod admin;
+mod api;
 pub(crate) mod assets;
+mod handoff;
+mod launch;
 mod lnurlp;
 mod pages;
 mod user;
@@ -56,6 +59,8 @@ pub(crate) struct App {
     /// A separate origin for the operator pages; when set, `/admin` answers only there.
     pub(crate) operator_origin: Option<Url>,
     pub(crate) client_ip_header: Option<HeaderName>,
+    /// `server.handoff_origins`, serialized as browsers send `Origin`.
+    pub(crate) handoff_origins: Vec<String>,
     pub(crate) reserved: HashSet<String>,
     pub(crate) session_ttl_secs: i64,
     pub(crate) secure_cookies: bool,
@@ -79,6 +84,13 @@ impl App {
             .map(public_origin)
             .transpose()
             .context("invalid server.operator_url")?;
+        let handoff_origins: Vec<String> = config
+            .server
+            .handoff_origins
+            .iter()
+            .map(|origin| public_origin(origin).map(|url| url.origin().ascii_serialization()))
+            .collect::<Result<_>>()
+            .context("invalid server.handoff_origins")?;
         Ok(Self {
             secure_cookies: wallet.origin.scheme() == "https",
             wallet,
@@ -88,6 +100,7 @@ impl App {
             admin_hash,
             operator_origin,
             client_ip_header,
+            handoff_origins,
             reserved: config
                 .server
                 .reserved_usernames
@@ -173,6 +186,11 @@ pub(crate) fn router(app: Shared) -> Router {
         .route("/logout", post(user::logout))
         .route("/auth/nostr/challenge", post(user::nostr_challenge))
         .route("/auth/nostr", post(user::nostr_auth))
+        .route(handoff::PATH, post(handoff::start))
+        .route("/auth/nostr/handoff/continue", get(handoff::resume))
+        .route("/auth/nostr/handoff/confirm", post(handoff::confirm))
+        .route("/launch/lightning/{target}", get(launch::lightning))
+        .route("/api/v1/address", get(api::address).options(api::preflight))
         .route("/wallet", get(user::wallet_page))
         .route("/wallet/receive", post(user::receive))
         .route("/wallet/invoice/{hash}", get(user::invoice_status))
@@ -265,7 +283,9 @@ async fn guard(State(app): State<Shared>, request: Request, next: Next) -> Respo
     let lnurl = path.starts_with("/.well-known/lnurlp/") || path.starts_with("/lnurlp/");
     let admin = path == "/admin" || path.starts_with("/admin/");
     let writes = !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
-    if writes {
+    // A handoff's credential is the signed event it carries, so other sites may post it.
+    let signed_handoff = path == handoff::PATH;
+    if writes && !signed_handoff {
         let headers = request.headers();
         let from_operator = admin
             && app
@@ -284,6 +304,11 @@ async fn guard(State(app): State<Shared>, request: Request, next: Next) -> Respo
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     headers.insert(REFERRER_POLICY, HeaderValue::from_static("same-origin"));
     headers.insert(X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    // The Send form's QR scanner may use the camera; nothing else may.
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(self), microphone=()"),
+    );
     headers.insert(
         CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(CONTENT_SECURITY_POLICY_VALUE),

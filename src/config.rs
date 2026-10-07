@@ -52,6 +52,11 @@ pub(crate) struct Server {
     /// Allow LNURL requests to loopback and private addresses (local regtest only).
     #[serde(default)]
     pub(crate) allow_private_lnurl_hosts: bool,
+    /// HTTPS origins of apps that hand signed-in users over (`POST /auth/nostr/handoff`)
+    /// and may call `GET /api/v1/address` from the browser. Their handoffs skip
+    /// the confirmation page; nothing else is skipped.
+    #[serde(default)]
+    pub(crate) handoff_origins: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,6 +217,11 @@ impl Config {
         if let Some(operator_url) = &self.server.operator_url {
             public_origin(operator_url).context("invalid server.operator_url")?;
         }
+        for origin in &self.server.handoff_origins {
+            if public_origin(origin).is_err() {
+                bail!("server.handoff_origins entries must be HTTPS origins without a path: {origin:?}");
+            }
+        }
         let limits = &self.limits;
         let msat = |sats: u64| sats.checked_mul(1000).filter(|value| *value <= MAX_SAFE_JSON_INTEGER);
         for (name, value) in [
@@ -320,5 +330,26 @@ mod tests {
         assert!(Config::parse(text, operator).unwrap().server.operator_url.is_some());
         let insecure = vars(&[("SATCHEL_SERVER__OPERATOR_URL", "http://wallet-admin.example.org")]);
         assert!(Config::parse(text, insecure).is_err());
+    }
+
+    #[test]
+    fn handoff_origins_must_be_https_origins() {
+        let text = include_str!("../example/config.toml.example");
+        let origins = vars(&[(
+            "SATCHEL_SERVER__HANDOFF_ORIGINS",
+            r#"["https://app.example.org", "https://other.example.net:8443/"]"#,
+        )]);
+        assert_eq!(Config::parse(text, origins).unwrap().server.handoff_origins.len(), 2);
+        for bad in [
+            r#"["http://app.example.org"]"#,
+            r#"["https://app.example.org/path"]"#,
+            r#"["https://user@app.example.org"]"#,
+            r#"["app.example.org"]"#,
+            r#"["*"]"#,
+            r#""https://app.example.org""#,
+        ] {
+            let origins = vars(&[("SATCHEL_SERVER__HANDOFF_ORIGINS", bad)]);
+            assert!(Config::parse(text, origins).is_err(), "{bad} must be refused");
+        }
     }
 }

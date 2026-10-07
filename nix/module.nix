@@ -27,6 +27,7 @@ let
       reserved_usernames = cfg.reservedUsernames;
       session_days = cfg.sessionDays;
       allow_private_lnurl_hosts = cfg.allowPrivateLnurlHosts;
+      handoff_origins = cfg.handoffOrigins;
     };
     lnd = withoutNulls {
       rest_host = cfg.lnd.restHost;
@@ -101,6 +102,16 @@ in
       type = types.bool;
       default = false;
       description = "Allow paying Lightning Addresses on loopback or private addresses (local regtest only).";
+    };
+    handoffOrigins = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "https://app.example.org" ];
+      description = ''
+        HTTPS origins of apps that send users here with a handoff sign-in (POST /auth/nostr/handoff)
+        and may call GET /api/v1/address from the browser. Handoffs from these origins skip the
+        confirmation page; handoffs from anywhere else still work after one more click.
+      '';
     };
     lnd = {
       restHost = mkOption {
@@ -178,6 +189,10 @@ in
       {
         assertion = cfg.operatorUrl == null || builtins.match "https://[^/@?#]+/?" cfg.operatorUrl != null;
         message = "services.satchel.operatorUrl must be an HTTPS origin without a path, query, or credentials.";
+      }
+      {
+        assertion = lib.all (origin: builtins.match "https://[^/@?#]+/?" origin != null) cfg.handoffOrigins;
+        message = "services.satchel.handoffOrigins must be HTTPS origins without a path, query, or credentials.";
       }
     ];
 

@@ -324,11 +324,18 @@ impl Wallet {
             .map(str::to_ascii_lowercase)
     }
 
-    async fn decode(&self, bolt11: &str) -> Result<DecodedInvoice, WalletError> {
+    /// Decodes an invoice this wallet could pay: on the node's network and not expired.
+    pub(crate) async fn decode(&self, bolt11: &str) -> Result<DecodedInvoice, WalletError> {
         if lnd::is_mainnet_invoice(bolt11) {
             return Err(WalletError::invalid(
                 "That is a mainnet invoice. This wallet only works on test networks.",
             ));
+        }
+        if let Some(network) = lnd::foreign_invoice_network(bolt11, &self.network) {
+            return Err(WalletError::invalid(format!(
+                "That invoice is for {network}, but this wallet runs on {}.",
+                self.network
+            )));
         }
         let decoded = self.lnd.decode_invoice(bolt11.to_owned()).await.map_err(|error| {
             warn!(%error, "cannot decode invoice");

@@ -206,6 +206,40 @@ pub(crate) fn is_mainnet_invoice(bolt11: &str) -> bool {
     lower.starts_with("lnbc") && !lower.starts_with("lnbcrt")
 }
 
+/// BOLT11 currency prefixes (after `ln`) and the networks they belong to.
+/// testnet4 invoices use testnet's prefix.
+const INVOICE_PREFIXES: [(&str, &str); 5] = [
+    ("bc", "mainnet"),
+    ("tb", "testnet"),
+    ("tbs", "signet"),
+    ("bcrt", "regtest"),
+    ("sb", "simnet"),
+];
+
+/// The network an invoice's prefix names (`lntbs...` is signet), when it is a known one.
+pub(crate) fn invoice_network(bolt11: &str) -> Option<&'static str> {
+    let lower = bolt11.trim().to_ascii_lowercase();
+    let currency: String = lower
+        .strip_prefix("ln")?
+        .chars()
+        .take_while(char::is_ascii_lowercase)
+        .collect();
+    INVOICE_PREFIXES
+        .iter()
+        .find(|(prefix, _)| *prefix == currency)
+        .map(|(_, network)| *network)
+}
+
+/// The other network an invoice belongs to, when its prefix is not the node's.
+pub(crate) fn foreign_invoice_network(bolt11: &str, node_network: &str) -> Option<&'static str> {
+    let node_network = if node_network == "testnet4" {
+        "testnet"
+    } else {
+        node_network
+    };
+    invoice_network(bolt11).filter(|network| *network != node_network)
+}
+
 fn u64_from_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -715,6 +749,24 @@ mod tests {
         assert!(!is_mainnet_invoice("lnbcrt10u1p..."));
         assert!(!is_mainnet_invoice("lntbs10u1p..."));
         assert!(!is_mainnet_invoice("lntb10u1p..."));
+    }
+
+    #[test]
+    fn reads_the_network_from_invoice_prefixes() {
+        assert_eq!(invoice_network("lntbs10u1p..."), Some("signet"));
+        assert_eq!(invoice_network(" LNTBS1P... "), Some("signet"));
+        assert_eq!(invoice_network("lntb10u1p..."), Some("testnet"));
+        assert_eq!(invoice_network("lntb1p..."), Some("testnet"));
+        assert_eq!(invoice_network("lnbcrt500n1p..."), Some("regtest"));
+        assert_eq!(invoice_network("lnsb1p..."), Some("simnet"));
+        assert_eq!(invoice_network("lnbc1p..."), Some("mainnet"));
+        assert_eq!(invoice_network("lnxyz1p..."), None);
+        assert_eq!(invoice_network("alice@example.org"), None);
+        assert_eq!(foreign_invoice_network("lntbs10u1p...", "signet"), None);
+        assert_eq!(foreign_invoice_network("lntb10u1p...", "testnet4"), None);
+        assert_eq!(foreign_invoice_network("lntb10u1p...", "signet"), Some("testnet"));
+        assert_eq!(foreign_invoice_network("lnbcrt10u1p...", "signet"), Some("regtest"));
+        assert_eq!(foreign_invoice_network("lnxyz1p...", "signet"), None);
     }
 
     #[test]

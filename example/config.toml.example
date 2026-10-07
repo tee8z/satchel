@@ -19,6 +19,12 @@ admin_password_hash_file = "admin-password.hash"
 # operator_url = "https://wallet-admin.example.org:9443"
 reserved_usernames = []
 session_days = 14
+# Apps that send users here with "Open Satchel" (handoff sign-in) and look up
+# their Lightning Address from the browser; see docs/integrating.md. HTTPS
+# origins only. Handoffs from these skip the confirmation page; handoffs from
+# anywhere else still work after one more click.
+# handoff_origins = ["https://app.example.org"]
+handoff_origins = []
 
 [lnd]
 # LND REST endpoint, certificate, and a macaroon baked with:

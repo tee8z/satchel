@@ -13,6 +13,7 @@ let
           package = pkgs.writeShellScriptBin "satchel" "exit 0";
           publicUrl = "https://wallet.example.org";
           operatorUrl = "https://wallet-admin.example.org:9443";
+          handoffOrigins = [ "https://app.example.org" ];
           metricsAddress = "127.0.0.1:9095";
           adminPasswordHashFile = "/run/secrets/wallet-admin.hash";
           lnd = {
@@ -62,6 +63,7 @@ pkgs.runCommand "satchel-module-check"
     assert server["database_path"] == "/var/lib/satchel/wallet.db"
     assert server["metrics_address"] == "127.0.0.1:9095"
     assert server["admin_password_hash_file"] == "admin-password-hash"
+    assert server["handoff_origins"] == ["https://app.example.org"]
     assert "client_ip_header" not in server
     lnd = config["lnd"]
     assert lnd["rest_host"] == "127.0.0.1:8080"
