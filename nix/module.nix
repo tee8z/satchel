@@ -19,6 +19,7 @@ let
     server = withoutNulls {
       bind_address = cfg.listenAddress;
       public_url = cfg.publicUrl;
+      operator_url = cfg.operatorUrl;
       database_path = "/var/lib/satchel/wallet.db";
       metrics_address = cfg.metricsAddress;
       client_ip_header = cfg.clientIpHeader;
@@ -59,6 +60,15 @@ in
       type = types.str;
       example = "https://wallet.example.org";
       description = "Public HTTPS origin. Lightning Addresses use its host.";
+    };
+    operatorUrl = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "https://wallet-admin.example.org:9443";
+      description = ''
+        Optional separate HTTPS origin for the operator pages, such as a VPN-only name.
+        When set, /admin answers only on this host; the reverse proxy routes it to the same listener.
+      '';
     };
     metricsAddress = mkOption {
       type = types.nullOr types.str;
@@ -164,6 +174,10 @@ in
       {
         assertion = builtins.match "https://[^/@?#]+/?" cfg.publicUrl != null;
         message = "services.satchel.publicUrl must be an HTTPS origin without a path, query, or credentials.";
+      }
+      {
+        assertion = cfg.operatorUrl == null || builtins.match "https://[^/@?#]+/?" cfg.operatorUrl != null;
+        message = "services.satchel.operatorUrl must be an HTTPS origin without a path, query, or credentials.";
       }
     ];
 

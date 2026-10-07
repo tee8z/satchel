@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
 use super::pages::{self, Ctx};
-use super::{ClientIp, OperatorSession, Reject, Shared, check_csrf, redirect, redirect_with_cookie};
+use super::{ClientIp, OperatorHost, OperatorSession, Reject, Shared, check_csrf, redirect, redirect_with_cookie};
 use crate::auth;
 use crate::error::WalletError;
 use crate::metrics::inc;
@@ -16,11 +16,8 @@ use crate::util::{parse_sats, random_token};
 
 const MINUTE: Duration = Duration::from_secs(60);
 
-pub(super) async fn login_page(State(app): State<Shared>) -> Result<Response, Reject> {
-    if app.admin_hash.is_none() {
-        return Err(Reject::NotFound);
-    }
-    Ok(pages::admin_login(&Ctx::visitor(&app.wallet.network), None).into_response())
+pub(super) async fn login_page(State(app): State<Shared>, _host: OperatorHost) -> Response {
+    pages::admin_login(&Ctx::visitor(&app.wallet.network), None).into_response()
 }
 
 #[derive(Deserialize)]
@@ -30,6 +27,7 @@ pub(super) struct LoginForm {
 
 pub(super) async fn login(
     State(app): State<Shared>,
+    _host: OperatorHost,
     ip: ClientIp,
     Form(form): Form<LoginForm>,
 ) -> Result<Response, Reject> {
@@ -66,7 +64,10 @@ pub(super) async fn logout(
 ) -> Result<Response, Reject> {
     check_csrf(&operator.csrf, &form.csrf)?;
     app.wallet.db.delete_session(&operator.token_hash).await?;
-    Ok(redirect_with_cookie("/", app.set_cookie(&app.admin_cookie(), "", 0)))
+    Ok(redirect_with_cookie(
+        "/admin/login",
+        app.set_cookie(&app.admin_cookie(), "", 0),
+    ))
 }
 
 #[derive(Deserialize)]

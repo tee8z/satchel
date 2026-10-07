@@ -2,12 +2,12 @@
 //! wallet page, Nostr login, the operator pages, and security headers.
 
 use axum::body::{Body, to_bytes};
-use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION, ORIGIN, SET_COOKIE};
+use axum::http::header::{CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN, SET_COOKIE};
 use axum::http::{Request, Response, StatusCode};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use super::{ORIGIN as SITE, harness};
+use super::{ORIGIN as SITE, harness, harness_with};
 use crate::nostr::tests::signed_event;
 use crate::util::now;
 use crate::web::{self, Shared};
@@ -408,4 +408,81 @@ async fn the_operator_pages_need_their_own_password() {
     )
     .await;
     assert_eq!(member_try.location.as_deref(), Some("/admin/login"));
+}
+
+const OPERATOR_SITE: &str = "https://wallet-admin.example.org:9443";
+const OPERATOR_HOST: &str = "wallet-admin.example.org:9443";
+const PUBLIC_HOST: &str = "wallet.example.org";
+
+async fn send(app: &Shared, request: Request<Body>) -> Reply {
+    read(web::router(app.clone()).oneshot(request).await.unwrap()).await
+}
+
+fn on_host(uri: &str, host: &str, cookie: Option<&str>) -> Request<Body> {
+    let mut request = Request::get(uri).header(HOST, host);
+    if let Some(cookie) = cookie {
+        request = request.header(COOKIE, cookie);
+    }
+    request.body(Body::empty()).unwrap()
+}
+
+fn form_on_host(uri: &str, host: &str, origin: &str, cookie: Option<&str>, form: &str) -> Request<Body> {
+    let mut request = Request::post(uri)
+        .header(HOST, host)
+        .header(ORIGIN, origin)
+        .header(CONTENT_TYPE, "application/x-www-form-urlencoded");
+    if let Some(cookie) = cookie {
+        request = request.header(COOKIE, cookie);
+    }
+    request.body(Body::from(form.to_owned())).unwrap()
+}
+
+#[tokio::test]
+async fn the_operator_pages_can_live_on_their_own_host() {
+    let h = harness_with(|config| config.server.operator_url = Some(OPERATOR_SITE.to_owned())).await;
+    let password = "password=operator+password";
+    // The public name has no operator pages.
+    let public = send(&h.app, on_host("/admin/login", PUBLIC_HOST, None)).await;
+    assert_eq!(public.status, StatusCode::NOT_FOUND);
+    let public_login = form_on_host("/admin/login", PUBLIC_HOST, SITE, None, password);
+    assert_eq!(send(&h.app, public_login).await.status, StatusCode::NOT_FOUND);
+    // The operator name serves them, and its forms post from its own origin.
+    let login = send(
+        &h.app,
+        form_on_host("/admin/login", OPERATOR_HOST, OPERATOR_SITE, None, password),
+    )
+    .await;
+    assert_eq!(login.location.as_deref(), Some("/admin"), "{}", login.body);
+    let operator = login.cookie.unwrap();
+    let page = send(&h.app, on_host("/admin", OPERATOR_HOST, Some(&operator))).await;
+    assert_eq!(page.status, StatusCode::OK);
+    // A valid operator session does nothing on the public name.
+    let elsewhere = send(&h.app, on_host("/admin", PUBLIC_HOST, Some(&operator))).await;
+    assert_eq!(elsewhere.status, StatusCode::NOT_FOUND);
+    // The operator origin cannot post to member pages.
+    let signup = form_on_host(
+        "/signup",
+        OPERATOR_HOST,
+        OPERATOR_SITE,
+        None,
+        "username=mallory&password=correct+horse+battery&confirm=correct+horse+battery",
+    );
+    assert_eq!(send(&h.app, signup).await.status, StatusCode::FORBIDDEN);
+    // Logging out ends the session.
+    let csrf = field(&page.body, "csrf");
+    let logout = send(
+        &h.app,
+        form_on_host(
+            "/admin/logout",
+            OPERATOR_HOST,
+            OPERATOR_SITE,
+            Some(&operator),
+            &format!("csrf={csrf}"),
+        ),
+    )
+    .await;
+    assert_eq!(logout.location.as_deref(), Some("/admin/login"));
+    assert!(logout.cookie.unwrap().ends_with('='), "the cookie is cleared");
+    let after = send(&h.app, on_host("/admin", OPERATOR_HOST, Some(&operator))).await;
+    assert_eq!(after.location.as_deref(), Some("/admin/login"));
 }

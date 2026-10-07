@@ -40,6 +40,10 @@ pub(crate) struct Server {
     /// `SATCHEL_ADMIN_PASSWORD_HASH` overrides it. No hash, no admin pages.
     #[serde(default)]
     pub(crate) admin_password_hash_file: Option<PathBuf>,
+    /// Optional separate HTTPS origin for the operator pages, for example a
+    /// VPN-only name. When set, `/admin` answers only on this host.
+    #[serde(default)]
+    pub(crate) operator_url: Option<String>,
     /// Usernames nobody may register, on top of the built-in list.
     #[serde(default)]
     pub(crate) reserved_usernames: Vec<String>,
@@ -205,6 +209,9 @@ impl Config {
 
     pub(crate) fn validate(&self) -> Result<()> {
         public_origin(&self.server.public_url)?;
+        if let Some(operator_url) = &self.server.operator_url {
+            public_origin(operator_url).context("invalid server.operator_url")?;
+        }
         let limits = &self.limits;
         let msat = |sats: u64| sats.checked_mul(1000).filter(|value| *value <= MAX_SAFE_JSON_INTEGER);
         for (name, value) in [
@@ -309,5 +316,9 @@ mod tests {
         assert!(Config::parse(text, vars(&[("SATCHEL_SERVER__NO_SUCH_KEY", "1")])).is_err());
         assert!(Config::parse(text, vars(&[("SATCHEL_SERVER__PUBLIC_URL", "http://example.org")])).is_err());
         assert!(Config::parse(text, vars(&[("SATCHEL___KEY", "1")])).is_err());
+        let operator = vars(&[("SATCHEL_SERVER__OPERATOR_URL", "https://wallet-admin.example.org:9443")]);
+        assert!(Config::parse(text, operator).unwrap().server.operator_url.is_some());
+        let insecure = vars(&[("SATCHEL_SERVER__OPERATOR_URL", "http://wallet-admin.example.org")]);
+        assert!(Config::parse(text, insecure).is_err());
     }
 }

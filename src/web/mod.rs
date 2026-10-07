@@ -20,7 +20,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
 use axum::http::header::{
-    ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, LOCATION, ORIGIN,
+    ACCESS_CONTROL_ALLOW_ORIGIN, CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN,
     REFERRER_POLICY, SET_COOKIE, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
 };
 use axum::http::request::Parts;
@@ -32,7 +32,7 @@ use axum::{Json, Router};
 use url::Url;
 
 use crate::auth;
-use crate::config::{Config, RateLimits};
+use crate::config::{Config, RateLimits, public_origin};
 use crate::db::Account;
 use crate::metrics::inc;
 use crate::nostr::Challenges;
@@ -53,6 +53,8 @@ pub(crate) struct App {
     pub(crate) challenges: Challenges,
     /// The operator's argon2 hash; no hash, no operator pages.
     pub(crate) admin_hash: Option<String>,
+    /// A separate origin for the operator pages; when set, `/admin` answers only there.
+    pub(crate) operator_origin: Option<Url>,
     pub(crate) client_ip_header: Option<HeaderName>,
     pub(crate) reserved: HashSet<String>,
     pub(crate) session_ttl_secs: i64,
@@ -70,6 +72,13 @@ impl App {
             .map(|name| HeaderName::from_bytes(name.trim().to_ascii_lowercase().as_bytes()))
             .transpose()
             .context("invalid server.client_ip_header")?;
+        let operator_origin = config
+            .server
+            .operator_url
+            .as_deref()
+            .map(public_origin)
+            .transpose()
+            .context("invalid server.operator_url")?;
         Ok(Self {
             secure_cookies: wallet.origin.scheme() == "https",
             wallet,
@@ -77,6 +86,7 @@ impl App {
             rate: config.rate_limits.clone(),
             challenges: Challenges::default(),
             admin_hash,
+            operator_origin,
             client_ip_header,
             reserved: config
                 .server
@@ -86,6 +96,20 @@ impl App {
                 .collect(),
             session_ttl_secs: i64::from(config.server.session_days) * 86_400,
         })
+    }
+
+    /// Whether a request may reach the operator pages: any host, unless
+    /// `server.operator_url` names the only one.
+    pub(crate) fn on_operator_host(&self, parts: &Parts) -> bool {
+        let Some(origin) = &self.operator_origin else {
+            return true;
+        };
+        let host = parts
+            .headers
+            .get(HOST)
+            .and_then(|value| value.to_str().ok())
+            .or_else(|| parts.uri.authority().map(|authority| authority.as_str()));
+        host.is_some_and(|host| host.eq_ignore_ascii_case(&authority(origin)))
     }
 
     /// Counts an attempt; false (and a metric) when over the limit.
@@ -225,14 +249,33 @@ fn same_origin(headers: &HeaderMap, origin: &Url) -> bool {
     }
 }
 
-/// Refuses cross-site writes and adds security headers to every response.
-async fn guard(State(app): State<Shared>, request: Request, next: Next) -> Response {
-    let writes = !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
-    if writes && !same_origin(request.headers(), &app.wallet.origin) {
-        return (StatusCode::FORBIDDEN, "Cross-site request refused.").into_response();
+/// `host[:port]` as browsers send it in `Host`, without the scheme's default port.
+fn authority(url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default();
+    match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
     }
+}
+
+/// Refuses cross-site writes and adds security headers to every response.
+/// Operator pages on their own origin may also post from that origin.
+async fn guard(State(app): State<Shared>, request: Request, next: Next) -> Response {
     let path = request.uri().path();
     let lnurl = path.starts_with("/.well-known/lnurlp/") || path.starts_with("/lnurlp/");
+    let admin = path == "/admin" || path.starts_with("/admin/");
+    let writes = !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    if writes {
+        let headers = request.headers();
+        let from_operator = admin
+            && app
+                .operator_origin
+                .as_ref()
+                .is_some_and(|origin| same_origin(headers, origin));
+        if !from_operator && !same_origin(headers, &app.wallet.origin) {
+            return (StatusCode::FORBIDDEN, "Cross-site request refused.").into_response();
+        }
+    }
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers
@@ -401,6 +444,22 @@ impl FromRequestParts<Shared> for UserSession {
     }
 }
 
+/// A request the operator pages may answer: they are configured, and the
+/// request reached the operator host when one is set. Anything else is a 404.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OperatorHost;
+
+impl FromRequestParts<Shared> for OperatorHost {
+    type Rejection = Reject;
+
+    async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self, Self::Rejection> {
+        if app.admin_hash.is_none() || !app.on_operator_host(parts) {
+            return Err(Reject::NotFound);
+        }
+        Ok(Self)
+    }
+}
+
 /// The operator, signed in with the separate admin credential.
 #[derive(Debug, Clone)]
 pub(crate) struct OperatorSession {
@@ -412,9 +471,7 @@ impl FromRequestParts<Shared> for OperatorSession {
     type Rejection = Reject;
 
     async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self, Self::Rejection> {
-        if app.admin_hash.is_none() {
-            return Err(Reject::NotFound);
-        }
+        OperatorHost::from_request_parts(parts, app).await?;
         let token = cookie(&parts.headers, &app.admin_cookie()).ok_or(Reject::Operator)?;
         let token_hash = auth::token_hash(&token);
         match app.wallet.db.session(&token_hash).await? {

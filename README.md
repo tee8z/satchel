@@ -36,7 +36,9 @@ history and its MIT OR Apache-2.0 licenses.
   global 24-hour limits, never more than the node's channel balance covers.
 - **Operator page**: accounts and balances, total liabilities against the
   node's channel and on-chain balances, faucet usage, freeze and credit
-  actions. It uses its own password, separate from user accounts.
+  actions. It uses its own password, separate from user accounts. With
+  `server.operator_url` it answers only on that origin (for example a
+  VPN-only name), and the public name returns 404 for `/admin`.
 
 ## Safety model
 
@@ -66,8 +68,10 @@ history and its MIT OR Apache-2.0 licenses.
   connection to the checked address, and follow no redirects. The invoice
   returned must match the requested amount and the address metadata hash.
 
-Not in scope: fund recovery, multi-node setups, mainnet hardening, or an
-audit. Treat every balance as an IOU from the operator.
+Run exactly one instance per database: the single writer and the
+in-memory record of payments in flight assume it. Not in scope: fund
+recovery, multi-node setups, mainnet hardening, or an audit. Treat every
+balance as an IOU from the operator.
 
 ## Run
 
@@ -116,7 +120,7 @@ See [the complete example](example/config.toml.example). Amounts are in sats.
 
 | Section | Keys |
 | --- | --- |
-| `[server]` | `bind_address`, `public_url` (HTTPS origin; addresses use its host), `database_path`, `metrics_address`, `client_ip_header`, `admin_password_hash_file`, `reserved_usernames`, `session_days`, `allow_private_lnurl_hosts` (local regtest only) |
+| `[server]` | `bind_address`, `public_url` (HTTPS origin; addresses use its host), `operator_url` (optional separate origin for `/admin`), `database_path`, `metrics_address`, `client_ip_header`, `admin_password_hash_file`, `reserved_usernames`, `session_days`, `allow_private_lnurl_hosts` (local regtest only) |
 | `[lnd]` | `rest_host`, `tls_cert_path`, `macaroon_path`, `request_timeout_secs`, `payment_timeout_secs`, `expected_network` |
 | `[limits]` | `max_balance_sat`, `max_payment_sat`, `min_receive_sat`, `max_receive_sat`, `invoice_expiry_secs`, `fee_limit_ppm`, `min_fee_limit_sat` |
 | `[faucet]` | `enabled` (default `false`), `amount_sat`, `per_account_daily_sat`, `global_daily_sat` |
@@ -134,6 +138,7 @@ The flake exports `packages.<system>.satchel` for `x86_64-linux` and
 services.satchel = {
   enable = true;
   publicUrl = "https://wallet.example.org";
+  operatorUrl = "https://wallet-admin.example.org:9443"; # optional, VPN-only
   clientIpHeader = "x-forwarded-for";
   metricsAddress = "127.0.0.1:9095";
   adminPasswordHashFile = "/run/secrets/satchel-admin.hash";

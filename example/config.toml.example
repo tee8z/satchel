@@ -14,6 +14,9 @@ client_ip_header = "x-forwarded-for"
 # argon2id hash from `satchel hash-password`, relative to CREDENTIALS_DIRECTORY
 # or this file. SATCHEL_ADMIN_PASSWORD_HASH overrides it. Omit to disable /admin.
 admin_password_hash_file = "admin-password.hash"
+# Optional separate origin for the operator pages (for example a VPN-only name).
+# When set, /admin answers only on this host.
+# operator_url = "https://wallet-admin.example.org:9443"
 reserved_usernames = []
 session_days = 14
 
