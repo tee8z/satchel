@@ -7,6 +7,13 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-07
+
+- Open to a compact wallet overview with recent activity and clear Send and Receive actions.
+- Move payment forms to dedicated pages, including the full flow without JavaScript.
+- Collapse the test-sat faucet until needed.
+- Give the wallet, app icons and browser chrome a charcoal-and-amber palette.
+
 ## [0.2.0] - 2026-10-07
 
 - Refresh the wallet with a dark layout, a prominent balance, and keyboard-accessible Send/Receive tabs.

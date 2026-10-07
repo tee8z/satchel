@@ -2,23 +2,23 @@
    Class names are shared with the markup in src/web/pages.rs; keep them. */
 
 :root {
-  --page: #080d17;
-  --card: #101927;
-  --ink: #f2f5fa;
-  --muted: #a0afc2;
-  --line: #243146;
-  --field: #0b1320;
-  --field-line: #40506a;
-  --accent: #4385ff;
-  --accent-hover: #65a0ff;
-  --accent-ink: #ffffff;
-  --accent-soft: #142a4e;
-  --ok: #7ce3b2;
-  --ok-bg: #123329;
-  --error: #ffb3b3;
-  --error-bg: #3c202a;
-  --warn-bg: #101a2c;
-  --warn-ink: #a4c5ff;
+  --page: #151310;
+  --card: #201d18;
+  --ink: #f5f0e8;
+  --muted: #b5ac9d;
+  --line: #3d372e;
+  --field: #181612;
+  --field-line: #786c59;
+  --accent: #e8b45b;
+  --accent-hover: #f2c87c;
+  --accent-ink: #20170b;
+  --accent-soft: #3b2c16;
+  --ok: #b3d59b;
+  --ok-bg: #253121;
+  --error: #f0aaa4;
+  --error-bg: #3d2423;
+  --warn-bg: #282219;
+  --warn-ink: #e7c58b;
   --shadow: 0 12px 32px rgb(0 0 0 / 10%);
   --radius: 1.25rem;
   --radius-small: 0.75rem;
@@ -47,7 +47,7 @@ body {
   margin: 0;
   font: 15px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   color: var(--ink);
-  background: radial-gradient(ellipse at 70% 0, #102142 0, transparent 36rem), var(--page);
+  background: radial-gradient(ellipse at 70% 0, #322617 0, transparent 36rem), var(--page);
   min-height: 100dvh;
 }
 
@@ -281,7 +281,7 @@ button,
   margin-top: 1rem;
   padding: 0.6rem 1.2rem;
   border: 1px solid transparent;
-  background: linear-gradient(180deg, #326de0, #1d58cd);
+  background: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
   line-height: 1.2;
@@ -293,15 +293,15 @@ button,
 
 button:hover,
 .button:hover {
-  border-color: #4385ff;
-  background: #1e58c3;
+  border-color: #e8b45b;
+  background: var(--accent-hover);
   color: var(--accent-ink);
 }
 
 button.secondary,
 .button.secondary {
-  background: #152033;
-  border-color: #34435a;
+  background: #2a251e;
+  border-color: #786c59;
   color: var(--ink);
 }
 
@@ -686,16 +686,21 @@ header.top nav a[aria-current="page"] { color: var(--ink); }
 .banner span { color: var(--muted); }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .5rem 0 1.25rem; }
 .page-heading h1 { margin: 0; font-size: 1.4rem; }
-.network-badge { display: inline-flex; align-items: center; gap: .45rem; padding: .2rem .65rem; border: 1px solid #2a4778; border-radius: 999px; color: #a4c5ff; background: #102344; font-size: .72rem; font-weight: 600; margin: 0; }
-.status-dot { width: .35rem; height: .35rem; border-radius: 50%; background: #6b9fff; }
-.summary { background: linear-gradient(135deg, #152541, #101927 75%); padding-top: 1.75rem; }
-.summary .balance { letter-spacing: -.055em; font-weight: 600; }
+.network-badge { display: inline-flex; align-items: center; gap: .45rem; padding: .2rem .65rem; border: 1px solid #75613e; border-radius: 999px; color: #e7c58b; background: #3b2c16; font-size: .72rem; font-weight: 600; margin: 0; }
+.status-dot { width: .35rem; height: .35rem; border-radius: 50%; background: #e8b45b; }
+.summary { background: linear-gradient(135deg, #342a1b, #201d18 75%); padding-top: 1.75rem; }
+.summary .balance { letter-spacing: -.04em; font-weight: 600; font-size: clamp(2.25rem, 9vw, 3rem); margin-bottom: 1.25rem; }
 .balance-unit { font-size: .45em; color: var(--muted); font-weight: 400; letter-spacing: -.01em; }
-.wallet-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin: 0 0 1.5rem; }
-.wallet-tabs button { margin: 0; }
-.wallet-tabs [aria-selected="false"] { background: #152033; border-color: #34435a; color: var(--muted); }
-.wallet-tabs [aria-selected="true"] { background: #2567e6; border-color: #4385ff; color: #fff; }
-.wallet-panel { min-width: 0; }
+/* The overview links to focused pages; forms are absent from the home view. */
+.wallet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin-bottom: 1.25rem; }
+.wallet-actions .button { margin: 0; }
+.back-link { display: inline-flex; align-items: center; gap: .45rem; min-height: 2.75rem; margin-bottom: .25rem; font-size: .9rem; text-decoration: none; }
+.back-link .ui-icon { transform: rotate(180deg); }
+.action-balance { color: var(--muted); font-size: .9rem; margin: -.25rem 0 1.25rem; }
+.action-balance .balance-unit { font-size: 1em; }
+.faucet-drawer { border: 1px solid var(--line); border-radius: var(--radius-small); margin: 1rem 0; padding: .9rem 1.1rem; background: var(--card); }
+.faucet-drawer > summary { margin: 0; font-size: .9rem; }
+.faucet-drawer .card { margin: 1rem 0 0; padding: 0; border: 0; box-shadow: none; }
 .field-help { font-size: .8rem; margin: .35rem 0 0; }
 textarea#send-to { font-family: var(--mono); font-size: .85rem; }
 .eyebrow { color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
@@ -714,7 +719,7 @@ footer { text-align: center; font-size: .75rem; padding-top: 1rem; }
 footer p { margin-bottom: .2rem; }
 footer a { display: inline-block; margin-top: .75rem; min-height: 2.75rem; }
 .landing { padding: 2.5rem .25rem 1rem; max-width: 29rem; margin: 0 auto; }
-.hero-icon { display: grid; place-items: center; width: 4rem; height: 4rem; background: #102344; border: 1px solid #284d87; border-radius: 1.2rem; margin-bottom: 2rem; color: #6b9fff; }
+.hero-icon { display: grid; place-items: center; width: 4rem; height: 4rem; background: #3b2c16; border: 1px solid #75613e; border-radius: 1.2rem; margin-bottom: 2rem; color: #e8b45b; }
 .hero-icon .ui-icon { width: 2rem; height: 2rem; }
 .landing h1 { font-size: clamp(2.4rem, 8vw, 3rem); margin: 1.25rem 0; letter-spacing: -.055em; }
 .landing .lead { color: var(--muted); line-height: 1.8; font-size: 1rem; }

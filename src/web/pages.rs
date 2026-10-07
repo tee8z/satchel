@@ -88,7 +88,7 @@ pub(crate) fn layout(ctx: &Ctx<'_>, title: &str, content: Markup) -> Markup {
                 link rel="manifest" href=(assets::url("manifest.webmanifest"));
                 link rel="icon" type="image/svg+xml" href=(assets::url("icon.svg"));
                 link rel="apple-touch-icon" href=(assets::url("apple-touch-icon.png"));
-                meta name="theme-color" content="#080d17";
+                meta name="theme-color" content="#151310";
                 script src=(assets::url("htmx.min.js")) defer {}
                 script src=(assets::url("app.js")) defer {}
             }
@@ -563,7 +563,16 @@ pub(crate) fn faucet_section(
     }
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum WalletView {
+    #[default]
+    Home,
+    Send,
+    Receive,
+}
+
 pub(crate) struct WalletPage<'a> {
+    pub(crate) view: WalletView,
     pub(crate) address: &'a str,
     pub(crate) lnurl: &'a str,
     pub(crate) balance_msat: i64,
@@ -572,42 +581,86 @@ pub(crate) struct WalletPage<'a> {
     pub(crate) receive: Markup,
     pub(crate) send: Markup,
     pub(crate) faucet: Option<Markup>,
+    pub(crate) faucet_open: bool,
+}
+
+/// A compact context line on action pages; it also receives balance updates.
+pub(crate) fn action_heading(title: &str, balance_msat: i64, frozen: bool) -> Markup {
+    html! {
+        a.back-link href="/wallet" { (icon("arrow-right")) "Back to wallet" }
+        h1 { (title) }
+        p.action-balance { "Available: " (balance(balance_msat, false)) }
+        @if frozen {
+            p.error role="alert" { "This account is frozen: it cannot send or receive. Contact the operator." }
+        }
+    }
+}
+
+fn wallet_address(address: &str, lnurl: &str, show_qr: bool) -> Markup {
+    html! {
+        p.label { "Your Lightning Address" }
+        p.address {
+            code { (address) }
+            button.secondary type="button" data-copy=(address) { "Copy" }
+        }
+        @if show_qr {
+            details {
+                summary { "Show address QR code" }
+                (qr::svg(lnurl, "Lightning Address QR code"))
+                textarea.code readonly rows="3" aria-label="LNURL" { (lnurl) }
+            }
+        }
+    }
 }
 
 pub(crate) fn wallet(ctx: &Ctx<'_>, page: &WalletPage<'_>) -> Markup {
+    let title = match page.view {
+        WalletView::Home => "Wallet",
+        WalletView::Send => "Send",
+        WalletView::Receive => "Receive",
+    };
     layout(
         ctx,
-        "Wallet",
+        title,
         html! {
-            div.page-heading {
-                h1 { "Your wallet" }
-                p.network-badge { span.status-dot {} (ctx.network) }
+            @match page.view {
+                WalletView::Home => {
+                    div.page-heading {
+                        h1 { "Your wallet" }
+                        p.network-badge { span.status-dot {} (ctx.network) }
+                    }
+                    section.card.summary {
+                        p.label { "Available balance" }
+                        p.balance { (balance(page.balance_msat, false)) }
+                        @if page.frozen {
+                            p.error role="alert" { "This account is frozen: it cannot send or receive. Contact the operator." }
+                        }
+                        div.wallet-actions aria-label="Wallet actions" {
+                            a.button href="/wallet/send" { (icon("send")) "Send" }
+                            a.button.secondary href="/wallet/receive" { (icon("receive")) "Receive" }
+                        }
+                        (wallet_address(page.address, page.lnurl, false))
+                    }
+                    (history(page.history, false))
+                    @if let Some(faucet) = &page.faucet {
+                        details.faucet-drawer open[page.faucet_open] {
+                            summary { "Need test sats?" }
+                            (faucet)
+                        }
+                    }
+                }
+                WalletView::Send => {
+                    (action_heading("Send", page.balance_msat, page.frozen))
+                    (page.send)
+                }
+                WalletView::Receive => {
+                    (action_heading("Receive", page.balance_msat, page.frozen))
+                    section.card.summary {
+                        (wallet_address(page.address, page.lnurl, true))
+                    }
+                    (page.receive)
+                }
             }
-            section.card.summary {
-                p.label { "Available balance" }
-                p.balance { (balance(page.balance_msat, false)) }
-                @if page.frozen {
-                    p.error role="alert" { "This account is frozen: it cannot send or receive. Contact the operator." }
-                }
-                div.wallet-tabs hidden data-wallet-tabs aria-label="Wallet actions" {
-                    button type="button" #tab-send data-wallet-tab="send" { (icon("send")) "Send" }
-                    button.secondary type="button" #tab-receive data-wallet-tab="receive" { (icon("receive")) "Receive" }
-                }
-                p.label { "Your Lightning Address" }
-                p.address {
-                    code { (page.address) }
-                    button.secondary type="button" data-copy=(page.address) { "Copy" }
-                }
-                details {
-                    summary { "Show address QR code" }
-                    (qr::svg(page.lnurl, "Lightning Address QR code"))
-                    textarea.code readonly rows="3" aria-label="LNURL" { (page.lnurl) }
-                }
-            }
-            div.wallet-panel #panel-send data-wallet-panel="send" { (page.send) }
-            div.wallet-panel #panel-receive data-wallet-panel="receive" { (page.receive) }
-            @if let Some(faucet) = &page.faucet { (faucet) }
-            (history(page.history, false))
         },
     )
 }

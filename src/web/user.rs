@@ -11,7 +11,7 @@ use maud::{Markup, html};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::pages::{self, Ctx, HandoffSignup, ReceiveState, SendValues};
+use super::pages::{self, Ctx, HandoffSignup, ReceiveState, SendValues, WalletView};
 use super::{App, ClientIp, Reject, Shared, UserSession, check_csrf, is_htmx, redirect, redirect_with_cookie};
 use crate::auth;
 use crate::error::WalletError;
@@ -386,6 +386,7 @@ pub(super) async fn nostr_auth(
 /// Sections of the wallet page that a POST without htmx replaces.
 #[derive(Default)]
 struct Sections {
+    view: WalletView,
     receive: Option<Markup>,
     send: Option<Markup>,
     faucet: Option<Markup>,
@@ -416,12 +417,14 @@ async fn render_wallet(app: &App, session: &UserSession, sections: Sections) -> 
     let send = sections
         .send
         .unwrap_or_else(|| pages::send_section(csrf, &random_token(), &SendValues::default(), None));
+    let faucet_open = sections.faucet.is_some();
     let faucet = wallet.faucet.enabled.then(|| {
         sections
             .faucet
             .unwrap_or_else(|| pages::faucet_section(csrf, &random_token(), faucet_amount(app), None))
     });
     let page = pages::WalletPage {
+        view: sections.view,
         address: &address,
         lnurl: &lnurl,
         balance_msat: balance,
@@ -430,6 +433,7 @@ async fn render_wallet(app: &App, session: &UserSession, sections: Sections) -> 
         receive,
         send,
         faucet,
+        faucet_open,
     };
     Ok(pages::wallet(&Ctx::member(wallet, session), &page))
 }
@@ -441,26 +445,42 @@ async fn respond(
     session: &UserSession,
     headers: &HeaderMap,
     section: Markup,
-    place: fn(Markup) -> Sections,
+    view: WalletView,
     money_moved: bool,
 ) -> Result<Response, Reject> {
     if !is_htmx(headers) {
-        return Ok(render_wallet(app, session, place(section)).await?.into_response());
+        let mut sections = Sections {
+            view,
+            ..Sections::default()
+        };
+        match view {
+            WalletView::Home => sections.faucet = Some(section),
+            WalletView::Send => sections.send = Some(section),
+            WalletView::Receive => sections.receive = Some(section),
+        }
+        return Ok(render_wallet(app, session, sections).await?.into_response());
     }
     if money_moved {
-        return Ok(with_updates(app, session, section).await?.into_response());
+        return Ok(with_updates(app, session, section, view == WalletView::Home)
+            .await?
+            .into_response());
     }
     Ok(section.into_response())
 }
 
 /// Adds out-of-band swaps for the balance and history.
-async fn with_updates(app: &App, session: &UserSession, markup: Markup) -> Result<Markup, Reject> {
+async fn with_updates(
+    app: &App,
+    session: &UserSession,
+    markup: Markup,
+    refresh_history: bool,
+) -> Result<Markup, Reject> {
     let balance = app.wallet.db.balance(session.account.id).await?;
     let history = app.wallet.db.history(session.account.id, HISTORY_LEN).await?;
     Ok(html! {
         (markup)
         (pages::balance(balance, true))
-        (pages::history(&history, true))
+        @if refresh_history { (pages::history(&history, true)) }
     })
 }
 
@@ -468,6 +488,32 @@ pub(super) async fn wallet_page(State(app): State<Shared>, session: UserSession)
     Ok(render_wallet(&app, &session, Sections::default())
         .await?
         .into_response())
+}
+
+pub(super) async fn send_page(State(app): State<Shared>, session: UserSession) -> Result<Response, Reject> {
+    Ok(render_wallet(
+        &app,
+        &session,
+        Sections {
+            view: WalletView::Send,
+            ..Sections::default()
+        },
+    )
+    .await?
+    .into_response())
+}
+
+pub(super) async fn receive_page(State(app): State<Shared>, session: UserSession) -> Result<Response, Reject> {
+    Ok(render_wallet(
+        &app,
+        &session,
+        Sections {
+            view: WalletView::Receive,
+            ..Sections::default()
+        },
+    )
+    .await?
+    .into_response())
 }
 
 #[derive(Deserialize)]
@@ -506,11 +552,7 @@ pub(super) async fn receive(
             },
         ),
     };
-    let place = |section| Sections {
-        receive: Some(section),
-        ..Sections::default()
-    };
-    respond(&app, &session, &headers, section, place, false).await
+    respond(&app, &session, &headers, section, WalletView::Receive, false).await
 }
 
 pub(super) async fn invoice_status(
@@ -527,7 +569,7 @@ pub(super) async fn invoice_status(
         .ok_or(Reject::NotFound)?;
     let status = pages::invoice_status(&invoice);
     if invoice.state == "settled" {
-        return Ok(with_updates(&app, &session, status).await?.into_response());
+        return Ok(with_updates(&app, &session, status, false).await?.into_response());
     }
     Ok(status.into_response())
 }
@@ -592,18 +634,7 @@ pub(super) async fn review_send(
         Ok(preview) => pages::send_review(&session.csrf, &form.key, &values, &preview, &app.wallet.network_name),
         Err(error) => pages::send_section(&session.csrf, &form.key, &values, Some(Err(&shown(&error)))),
     };
-    respond(
-        &app,
-        &session,
-        &headers,
-        section,
-        |send| Sections {
-            send: Some(send),
-            ..Sections::default()
-        },
-        false,
-    )
-    .await
+    respond(&app, &session, &headers, section, WalletView::Send, false).await
 }
 
 pub(super) async fn edit_send(
@@ -614,18 +645,7 @@ pub(super) async fn edit_send(
 ) -> Result<Response, Reject> {
     check_csrf(&session.csrf, &form.csrf)?;
     let section = pages::send_section(&session.csrf, &form.key, &form.values(), None);
-    respond(
-        &app,
-        &session,
-        &headers,
-        section,
-        |send| Sections {
-            send: Some(send),
-            ..Sections::default()
-        },
-        false,
-    )
-    .await
+    respond(&app, &session, &headers, section, WalletView::Send, false).await
 }
 
 pub(super) async fn send(
@@ -669,12 +689,8 @@ pub(super) async fn send(
             pages::send_section(&session.csrf, &random_token(), &values, Some(Err(&shown(error))))
         }
     };
-    let place = |section| Sections {
-        send: Some(section),
-        ..Sections::default()
-    };
     let moved = result.as_ref().is_ok_and(|payment| payment.status != "pending");
-    respond(&app, &session, &headers, section, place, moved).await
+    respond(&app, &session, &headers, section, WalletView::Send, moved).await
 }
 
 pub(super) async fn payment_status(
@@ -692,7 +708,7 @@ pub(super) async fn payment_status(
     if payment.status == "pending" {
         return Ok(status.into_response());
     }
-    Ok(with_updates(&app, &session, status).await?.into_response())
+    Ok(with_updates(&app, &session, status, false).await?.into_response())
 }
 
 #[derive(Deserialize)]
@@ -715,11 +731,7 @@ pub(super) async fn faucet(
         Ok(payment) => pages::faucet_section(&session.csrf, &random_token(), amount, Some(Ok(payment))),
         Err(error) => pages::faucet_section(&session.csrf, &random_token(), amount, Some(Err(&shown(error)))),
     };
-    let place = |section| Sections {
-        faucet: Some(section),
-        ..Sections::default()
-    };
-    respond(&app, &session, &headers, section, place, result.is_ok()).await
+    respond(&app, &session, &headers, section, WalletView::Home, result.is_ok()).await
 }
 
 fn render_settings(app: &App, session: &UserSession, message: Option<Result<&str, &str>>) -> Markup {

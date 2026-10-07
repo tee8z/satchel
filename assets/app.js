@@ -310,39 +310,3 @@ function stopScan() {
   view.hidden = true;
   button.disabled = false;
 }
-
-// Progressive enhancement: without JavaScript both payment forms remain usable.
-// The stable panel wrappers survive htmx replacing a form or its status.
-const walletTabs = document.querySelector('[data-wallet-tabs]');
-if (walletTabs) {
-  const tabs = [...walletTabs.querySelectorAll('[data-wallet-tab]')];
-  const panels = [...document.querySelectorAll('[data-wallet-panel]')];
-  const select = (name, focus = false) => {
-    for (const tab of tabs) {
-      const active = tab.dataset.walletTab === name;
-      tab.setAttribute('aria-selected', String(active));
-      tab.tabIndex = active ? 0 : -1;
-      if (active && focus) tab.focus();
-    }
-    for (const panel of panels) panel.hidden = panel.dataset.walletPanel !== name;
-  };
-  walletTabs.setAttribute('role', 'tablist');
-  for (const tab of tabs) {
-    tab.setAttribute('role', 'tab');
-    tab.setAttribute('aria-controls', `panel-${tab.dataset.walletTab}`);
-    tab.addEventListener('click', () => select(tab.dataset.walletTab));
-    tab.addEventListener('keydown', (event) => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-      event.preventDefault();
-      const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-        : (tabs.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-      select(tabs[index].dataset.walletTab, true);
-    });
-  }
-  for (const panel of panels) {
-    panel.setAttribute('role', 'tabpanel');
-    panel.setAttribute('aria-labelledby', `tab-${panel.dataset.walletPanel}`);
-  }
-  select(document.querySelector('#receive #invoice-status, #receive .error') ? 'receive' : 'send');
-  walletTabs.hidden = false;
-}

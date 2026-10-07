@@ -7,8 +7,8 @@
   "start_url": "/wallet",
   "scope": "/",
   "display": "standalone",
-  "theme_color": "#080d17",
-  "background_color": "#080d17",
+  "theme_color": "#151310",
+  "background_color": "#151310",
   "categories": [
     "developer",
     "finance",
