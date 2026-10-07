@@ -104,6 +104,9 @@ pub(crate) struct Grant<'a> {
 pub(crate) struct Transfer<'a> {
     pub(crate) sender: &'a Account,
     pub(crate) recipient: &'a Account,
+    /// How each side appears in the other's history (their Lightning Addresses).
+    pub(crate) sender_label: &'a str,
+    pub(crate) recipient_label: &'a str,
     pub(crate) amount_msat: i64,
     pub(crate) request_key: &'a str,
     pub(crate) memo: &'a str,
@@ -469,8 +472,9 @@ impl Db {
         sender: &Account,
         request_key: &str,
         invoice: &Invoice,
-        recipient: &str,
+        labels: (&str, &str),
     ) -> Result<Payment, WalletError> {
+        let (sender_label, recipient_label) = labels;
         let mut tx = self.begin().await?;
         if let Some(existing) = payment_by_key(&mut tx, request_key).await? {
             return Ok(existing);
@@ -498,7 +502,7 @@ impl Db {
             fee_limit_msat: 0,
             payment_hash: Some(&invoice.payment_hash),
             request_key: Some(request_key),
-            counterparty: recipient,
+            counterparty: recipient_label,
             memo: &invoice.memo,
         };
         let out_id = insert_payment(&mut tx, &out).await?;
@@ -508,7 +512,7 @@ impl Db {
             account_id: invoice.account_id,
             direction: "in",
             kind: "internal",
-            counterparty: &sender.username,
+            counterparty: sender_label,
             request_key: None,
             ..out
         };
@@ -546,7 +550,7 @@ impl Db {
             fee_limit_msat: 0,
             payment_hash: None,
             request_key: Some(transfer.request_key),
-            counterparty: &recipient.username,
+            counterparty: transfer.recipient_label,
             memo: transfer.memo,
         };
         let out_id = insert_payment(&mut tx, &out).await?;
@@ -555,7 +559,7 @@ impl Db {
         let incoming = NewPayment {
             account_id: recipient.id,
             direction: "in",
-            counterparty: &sender.username,
+            counterparty: transfer.sender_label,
             request_key: None,
             ..out
         };

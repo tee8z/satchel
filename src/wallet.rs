@@ -485,7 +485,12 @@ impl Wallet {
                 "That invoice is being paid right now. Check your history in a moment.",
             ));
         }
-        match self.db.pay_invoice_internally(account, key, &invoice, &recipient).await {
+        let sender = self.address(&account.username);
+        match self
+            .db
+            .pay_invoice_internally(account, key, &invoice, (&sender, &recipient))
+            .await
+        {
             Ok(payment) => {
                 inc(&self.metrics.internal_payments);
                 Ok(payment)
@@ -513,9 +518,13 @@ impl Wallet {
             .account_by_username(username)
             .await?
             .ok_or_else(|| WalletError::invalid("There is no account with that address here."))?;
+        let sender_label = self.address(&account.username);
+        let recipient_label = self.address(&recipient.username);
         let transfer = Transfer {
             sender: account,
             recipient: &recipient,
+            sender_label: &sender_label,
+            recipient_label: &recipient_label,
             amount_msat: to_i64(amount_msat),
             request_key: key,
             memo: comment,

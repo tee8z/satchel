@@ -297,7 +297,7 @@ async fn an_address_on_this_server_is_paid_directly() {
     let incoming = h.wallet.db.history(bob.id, 1).await.unwrap();
     assert_eq!(
         (incoming[0].direction.as_str(), incoming[0].counterparty.as_str()),
-        ("in", "alice")
+        ("in", "alice@wallet.example.org")
     );
     // Unknown names, yourself, and amounts over the balance are refused.
     assert!(
