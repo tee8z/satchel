@@ -177,7 +177,7 @@ async fn review_does_not_pay_and_edit_preserves_input() {
     let cookie = sign_up(&h.app, "alice").await;
     let account = h.wallet.db.account_by_username("alice").await.unwrap().unwrap();
     h.fund(&account, 2000).await;
-    let page = get(&h.app, "/wallet", Some(&cookie)).await;
+    let page = get(&h.app, "/wallet/send", Some(&cookie)).await;
     let csrf = field(&page.body, "csrf");
     let key = field(&page.body, "key");
     let (invoice, _) = h.lnd.external_invoice(1_000_000, None);
@@ -220,7 +220,9 @@ async fn sign_up_log_in_and_use_the_wallet() {
     let wallet = get(&h.app, "/wallet", Some(&cookie)).await;
     assert_eq!(wallet.status, StatusCode::OK);
     assert!(wallet.body.contains("alice@wallet.example.org"));
-    assert!(wallet.body.contains("LNURL1"));
+    assert!(!wallet.body.contains("id=\"send-to\""));
+    let receive = get(&h.app, "/wallet/receive", Some(&cookie)).await;
+    assert!(receive.body.contains("LNURL1"));
     let csrf = field(&wallet.body, "csrf");
 
     // Receive: an invoice with a QR code, then its status.
@@ -244,7 +246,8 @@ async fn sign_up_log_in_and_use_the_wallet() {
 
     // Send to another account by address, through htmx.
     sign_up(&h.app, "bob").await;
-    let key = field(&wallet.body, "key");
+    let send = get(&h.app, "/wallet/send", Some(&cookie)).await;
+    let key = field(&send.body, "key");
     let request = Request::post("/wallet/send")
         .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
         .header(COOKIE, &cookie)
@@ -591,4 +594,49 @@ async fn the_operator_pages_can_live_on_their_own_host() {
     assert!(logout.cookie.unwrap().ends_with('='), "the cookie is cleared");
     let after = send(&h.app, on_host("/admin", OPERATOR_HOST, Some(&operator))).await;
     assert_eq!(after.location.as_deref(), Some("/admin/login"));
+}
+
+#[tokio::test]
+async fn wallet_home_links_to_focused_send_and_receive_pages() {
+    let h = harness().await;
+    let cookie = sign_up(&h.app, "alice").await;
+    let home = get(&h.app, "/wallet", Some(&cookie)).await;
+    assert!(home.body.contains("href=\"/wallet/send\""));
+    assert!(home.body.contains("href=\"/wallet/receive\""));
+    assert!(home.body.contains("id=\"history\""));
+    assert!(!home.body.contains("id=\"send-to\""));
+    assert!(!home.body.contains("id=\"receive-amount\""));
+    for (path, present, absent) in [
+        ("/wallet/send", "id=\"send-to\"", "id=\"receive-amount\""),
+        ("/wallet/receive", "id=\"receive-amount\"", "id=\"send-to\""),
+    ] {
+        let page = get(&h.app, path, Some(&cookie)).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(page.body.contains(present));
+        assert!(!page.body.contains(absent));
+        assert!(!page.body.contains("id=\"history\""));
+        assert!(page.body.contains("Back to wallet"));
+        assert_eq!(get(&h.app, path, None).await.location.as_deref(), Some("/login"));
+    }
+    let receive = post(
+        &h.app,
+        "/wallet/receive",
+        Some(&cookie),
+        &format!("csrf={}&amount_sat=invalid", field(&home.body, "csrf")),
+        Some(SITE),
+    )
+    .await;
+    assert!(receive.body.contains("Enter a whole number of sats."));
+    assert!(!receive.body.contains("id=\"send-to\""));
+
+    // A plain form response must keep the faucet result visible.
+    let faucet = post(
+        &h.app,
+        "/wallet/faucet",
+        Some(&cookie),
+        &format!("csrf={}&key={}", field(&home.body, "csrf"), field(&home.body, "key")),
+        Some(SITE),
+    )
+    .await;
+    assert!(faucet.body.contains("class=\"faucet-drawer\" open"));
 }

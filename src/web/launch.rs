@@ -92,15 +92,8 @@ pub(super) async fn lightning(
         &Ctx::member(&app.wallet, &session),
         "Send",
         html! {
-            section.card.summary {
-                p.label { "Balance" }
-                p.balance { (pages::balance(balance, false)) }
-                @if session.account.frozen {
-                    p.error role="alert" { "This account is frozen: it cannot send or receive. Contact the operator." }
-                }
-            }
+            (pages::action_heading("Send", balance, session.account.frozen))
             (send)
-            p { a href="/wallet" { "Back to the wallet" } }
         },
     );
     Ok(page.into_response())
