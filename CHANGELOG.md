@@ -7,6 +7,16 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-07
+
+- Refresh the wallet with a dark layout, a prominent balance, and keyboard-accessible Send/Receive tabs.
+- Review the recipient, amount, maximum fee, and total before confirming a payment.
+- Keep the payment review and edit flow usable without JavaScript.
+- Explain unsupported payment formats and how to replace expired invoices.
+- Add `server.network_name` for names such as Mutinynet without changing network validation.
+- Add `server.recovery_url` for a separately hosted entry-recovery tool.
+
+
 ## [0.1.0] - not yet released
 
 The first release of Satchel, forked from Koerier 1.2.2: a multi-account
@@ -83,5 +93,7 @@ Lightning wallet and Lightning Address server for test networks only.
 - Documentation for operating, configuration, Docker, integrating, and
   abuse protection under `docs/`.
 
-[Unreleased]: https://github.com/tee8z/satchel/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tee8z/satchel/compare/v0.2.0...HEAD
 [0.1.0]: https://github.com/tee8z/satchel/releases/tag/v0.1.0
+
+[0.2.0]: https://github.com/tee8z/satchel/compare/v0.1.0...v0.2.0

@@ -19,6 +19,8 @@ let
     server = withoutNulls {
       bind_address = cfg.listenAddress;
       public_url = cfg.publicUrl;
+      network_name = cfg.networkName;
+      recovery_url = cfg.recoveryUrl;
       operator_url = cfg.operatorUrl;
       database_path = "/var/lib/satchel/wallet.db";
       metrics_address = cfg.metricsAddress;
@@ -71,6 +73,18 @@ in
         Optional separate HTTPS origin for the operator pages, such as a VPN-only name.
         When set, /admin answers only on this host; the reverse proxy routes it to the same listener.
       '';
+    };
+    networkName = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "Mutinynet";
+      description = "Name shown to users. Does not change LND network validation.";
+    };
+    recoveryUrl = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "/recover/";
+      description = "Optional local path or HTTPS URL for independently hosted entry recovery.";
     };
     metricsAddress = mkOption {
       type = types.nullOr types.str;

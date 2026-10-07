@@ -89,7 +89,7 @@ pub(super) async fn lightning(
     let send = pages::send_section(&session.csrf, &random_token(), &values, error.as_deref().map(Err));
     let balance = app.wallet.db.balance(session.account.id).await?;
     let page = pages::layout(
-        &Ctx::member(&app.wallet.network, &session),
+        &Ctx::member(&app.wallet, &session),
         "Send",
         html! {
             section.card.summary {

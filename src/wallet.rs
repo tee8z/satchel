@@ -57,6 +57,14 @@ pub(crate) struct PayRequest {
     pub(crate) comment: String,
 }
 
+/// A read-only check before the user authorizes a payment. Sending checks again.
+pub(crate) struct PaymentPreview {
+    pub(crate) recipient: String,
+    pub(crate) amount_msat: u64,
+    pub(crate) fee_limit_msat: u64,
+    pub(crate) description: String,
+}
+
 /// An outgoing Lightning payment after decoding.
 struct Outgoing {
     bolt11: String,
@@ -78,6 +86,8 @@ pub(crate) struct Wallet {
     /// Lightning Address domain: the public origin's host (and port, if any).
     pub(crate) domain: String,
     pub(crate) network: String,
+    pub(crate) network_name: String,
+    pub(crate) recovery_url: Option<String>,
     pub(crate) metrics: Metrics,
     /// How long a request waits for a payment's result before showing it as pending.
     pub(crate) send_wait: Duration,
@@ -129,6 +139,14 @@ impl Wallet {
             },
             domain,
             origin,
+            network_name: config
+                .server
+                .network_name
+                .as_deref()
+                .unwrap_or(&network)
+                .trim()
+                .to_owned(),
+            recovery_url: config.server.recovery_url.clone(),
             network,
             metrics: Metrics::default(),
             send_wait: Duration::from_secs(20),
@@ -251,6 +269,104 @@ impl Wallet {
         Ok(())
     }
 
+    pub(crate) async fn preview(&self, account: &Account, request: &PayRequest) -> Result<PaymentPreview, WalletError> {
+        if account.frozen {
+            return Err(WalletError::Frozen);
+        }
+        let destination = lnurl::parse_destination(&request.destination)?;
+        let (recipient, amount, description, internal) = match &destination {
+            Destination::Invoice(bolt11) => {
+                let decoded = self.decode(bolt11).await?;
+                let amount = if decoded.num_msat == 0 {
+                    request
+                        .amount_msat
+                        .ok_or_else(|| WalletError::invalid("This invoice has no amount. Enter one in sats."))?
+                } else {
+                    decoded.num_msat
+                };
+                let own = self.db.invoice(&decoded.payment_hash).await?;
+                let recipient = if let Some(invoice) = &own {
+                    if invoice.account_id == account.id {
+                        return Err(WalletError::invalid("That is your own invoice."));
+                    }
+                    if invoice.state != "open" {
+                        return Err(WalletError::AlreadyPaid);
+                    }
+                    let recipient = self
+                        .db
+                        .account(invoice.account_id)
+                        .await?
+                        .ok_or(WalletError::NotFound)?;
+                    if recipient.frozen {
+                        return Err(WalletError::invalid("That account cannot receive payments right now."));
+                    }
+                    self.address(&recipient.username)
+                } else {
+                    format!("Lightning node {}", decoded.destination)
+                };
+                (
+                    recipient,
+                    amount,
+                    truncate(&decoded.description, COMMENT_ALLOWED),
+                    own.is_some(),
+                )
+            }
+            _ => {
+                let url = destination
+                    .pay_url()
+                    .ok_or_else(|| WalletError::invalid("That Lightning Address is not valid."))?;
+                let amount = request
+                    .amount_msat
+                    .ok_or_else(|| WalletError::invalid("Enter an amount in sats."))?;
+                self.check_send_amount(amount)?;
+                let internal = self.own_username(&url);
+                if let Some(username) = &internal {
+                    let recipient = self
+                        .db
+                        .account_by_username(username)
+                        .await?
+                        .ok_or_else(|| WalletError::invalid("There is no account with that address here."))?;
+                    if recipient.id == account.id {
+                        return Err(WalletError::invalid("That is your own Lightning Address."));
+                    }
+                    if recipient.frozen {
+                        return Err(WalletError::invalid("That account cannot receive payments right now."));
+                    }
+                } else {
+                    let params = self.lnurl.pay_params(&url).await?;
+                    if !(params.min_sendable..=params.max_sendable).contains(&amount) {
+                        return Err(WalletError::invalid(format!(
+                            "That address accepts {} to {} sats.",
+                            format_msat(to_i64(params.min_sendable)),
+                            format_msat(to_i64(params.max_sendable))
+                        )));
+                    }
+                }
+                let recipient = match &destination {
+                    Destination::Address { user, domain } => format!("{user}@{domain}"),
+                    _ => url.to_string(),
+                };
+                (
+                    recipient,
+                    amount,
+                    truncate(&request.comment, COMMENT_ALLOWED),
+                    internal.is_some(),
+                )
+            }
+        };
+        self.check_send_amount(amount)?;
+        let fee_limit = if internal { 0 } else { self.fee_limit_msat(amount) };
+        if self.db.balance(account.id).await? < to_i64(amount.saturating_add(fee_limit)) {
+            return Err(WalletError::InsufficientBalance);
+        }
+        Ok(PaymentPreview {
+            recipient,
+            amount_msat: amount,
+            fee_limit_msat: fee_limit,
+            description,
+        })
+    }
+
     /// Pays an invoice, a Lightning Address, or an LNURL. A repeated request
     /// key returns the first attempt instead of paying again.
     pub(crate) async fn pay(self: &Arc<Self>, account: &Account, request: PayRequest) -> Result<Payment, WalletError> {
@@ -341,14 +457,14 @@ impl Wallet {
         if let Some(network) = lnd::foreign_invoice_network(bolt11, &self.network) {
             return Err(WalletError::invalid(format!(
                 "That invoice is for {network}, but this wallet runs on {}.",
-                self.network
+                self.network_name
             )));
         }
         let decoded = self.lnd.decode_invoice(bolt11.to_owned()).await.map_err(|error| {
             warn!(%error, "cannot decode invoice");
             WalletError::invalid(format!(
                 "Could not read that invoice. Is it a {} invoice?",
-                self.network
+                self.network_name
             ))
         })?;
         if decoded.payment_hash.len() != 64 {
@@ -356,7 +472,9 @@ impl Wallet {
         }
         let expiry = if decoded.expiry == 0 { 3600 } else { decoded.expiry };
         if i64::try_from(decoded.timestamp.saturating_add(expiry)).unwrap_or(i64::MAX) <= now() {
-            return Err(WalletError::invalid("That invoice has expired."));
+            return Err(WalletError::invalid(
+                "That invoice has expired. Ask the recipient for a new one.",
+            ));
         }
         Ok(decoded)
     }
@@ -492,7 +610,9 @@ impl Wallet {
             return Err(WalletError::AlreadyPaid);
         }
         if invoice.expires_at <= now() {
-            return Err(WalletError::invalid("That invoice has expired."));
+            return Err(WalletError::invalid(
+                "That invoice has expired. Ask the recipient for a new one.",
+            ));
         }
         if self.db.balance(account.id).await? < invoice.amount_msat {
             return Err(WalletError::InsufficientBalance);

@@ -12,6 +12,8 @@ let
           enable = true;
           package = pkgs.writeShellScriptBin "satchel" "exit 0";
           publicUrl = "https://wallet.example.org";
+          networkName = "Mutinynet";
+          recoveryUrl = "/recover/";
           operatorUrl = "https://wallet-admin.example.org:9443";
           handoffOrigins = [ "https://app.example.org" ];
           metricsAddress = "127.0.0.1:9095";
@@ -59,6 +61,8 @@ pkgs.runCommand "satchel-module-check"
         config = tomllib.load(source)
     server = config["server"]
     assert server["public_url"] == "https://wallet.example.org"
+    assert server["network_name"] == "Mutinynet"
+    assert server["recovery_url"] == "/recover/"
     assert server["operator_url"] == "https://wallet-admin.example.org:9443"
     assert server["bind_address"] == "127.0.0.1:8095"
     assert server["database_path"] == "/var/lib/satchel/wallet.db"

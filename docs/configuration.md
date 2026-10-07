@@ -48,6 +48,8 @@ as written.
 | `bind_address` | socket address | required | Private HTTP listener, for example `127.0.0.1:8095`. Put an HTTPS reverse proxy in front of it. |
 | `public_url` | URL | required | The public origin, for example `https://wallet.example.org`. Lightning Addresses are `<username>@<host>` (with the port, if the URL has one). Must be HTTPS without a path, query, fragment, or credentials; plain `http://` is accepted only for `localhost`, `127.0.0.1`, and `[::1]`, for local testing. |
 | `database_path` | path | required | The SQLite database. Created on first start; WAL files sit beside it. |
+| `network_name` | string | LND network | Name shown on wallet pages, such as `Mutinynet`. It does not change invoice or startup network checks. |
+| `recovery_url` | URL or local path | none | Link to an independently hosted entry-recovery tool, such as `/recover/`. It does not recover Satchel balances. |
 | `operator_url` | URL | none | A separate origin for the operator pages, for example a name reachable only over your VPN. When set, `/admin` answers only on this host and returns 404 on the public one. Same rules as `public_url`. See [operating.md](operating.md#the-operator-origin). |
 | `metrics_address` | socket address | none | A second private listener for `/metrics` and `/healthz`. Without it, `/healthz` is on the main listener and `/metrics` is not served. |
 | `client_ip_header` | string | none | The header your reverse proxy sets to the client address, for example `x-real-ip`. If the header holds a list, the right-most entry is used. Without it, rate limits see the proxy's address. Set it only when a proxy you control always overwrites the header. |
@@ -147,7 +149,7 @@ How it works and how to tune it: [abuse-protection.md](abuse-protection.md).
 ## NixOS module options
 
 `services.satchel` maps onto the same keys: `listenAddress`
-(`server.bind_address`), `publicUrl`, `operatorUrl`, `metricsAddress`,
+(`server.bind_address`), `publicUrl`, `networkName`, `recoveryUrl`, `operatorUrl`, `metricsAddress`,
 `clientIpHeader`, `adminPasswordHashFile`, `reservedUsernames`,
 `sessionDays`, `allowPrivateLnurlHosts`, `handoffOrigins`, and
 `lnd.{restHost, tlsCertPath, macaroonPath, expectedNetwork,
