@@ -1,0 +1,5 @@
+# Written by setup.sh
+tls.cert
+satchel.macaroon
+admin-password.hash
+operator-password.txt

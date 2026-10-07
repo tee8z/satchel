@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest a change that makes Satchel more useful for testing on test networks.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Satchel is for test networks only. Requests aimed at mainnet use, fund
+        recovery for real money, or non-custodial operation are out of scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How you would like Satchel to behave. Examples of requests, pages, or configuration help.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use now, or other ways to solve it.
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who it is for
+      multiple: true
+      options:
+        - People using a Satchel wallet
+        - Operators running Satchel
+        - Apps integrating with Satchel

@@ -45,7 +45,7 @@ use crate::wallet::Wallet;
 
 /// Scripts, styles, and connections from this origin only; nothing inline, no eval.
 const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-     img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+     img-src 'self' data:; manifest-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
 
 const OPERATOR_SESSION_SECS: i64 = 12 * 3600;
 

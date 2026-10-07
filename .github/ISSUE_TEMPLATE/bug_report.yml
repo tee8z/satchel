@@ -1,0 +1,78 @@
+name: Bug report
+description: Something in Satchel does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For security problems, do not open an issue: use
+        [private vulnerability reporting](https://github.com/tee8z/satchel/security/advisories/new)
+        as described in SECURITY.md.
+
+        Remove credentials, macaroons, password hashes, and session cookies from
+        anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. The regtest example (examples/regtest) is a good place to reproduce it.
+      placeholder: |
+        1. Sign up as alice
+        2. Create an invoice for 1000 sats
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Satchel version
+      description: Output of `satchel --version`, the image tag, or the commit.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you run it
+      options:
+        - Release binary
+        - Docker image
+        - NixOS module
+        - Built from source
+        - Regtest example
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - Mutinynet
+        - Other signet
+        - testnet / testnet4
+        - regtest
+    validations:
+      required: true
+  - type: input
+    id: lnd
+    attributes:
+      label: LND version
+      placeholder: "v0.21.4-beta"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log lines from Satchel (and LND if it is involved), with secrets removed.
+      render: text
+  - type: textarea
+    id: browser
+    attributes:
+      label: Browser and device
+      description: For problems in the web pages.

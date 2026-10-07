@@ -1,0 +1,25 @@
+# Satchel for the regtest example. TEST NETWORKS ONLY.
+# setup.sh writes tls.cert, satchel.macaroon, and admin-password.hash here.
+
+[server]
+bind_address = "0.0.0.0:8095"
+# Open exactly this URL: the origin check refuses other spellings such as
+# http://localhost:8095. Plain HTTP is accepted only on a loopback host.
+public_url = "http://127.0.0.1:8095"
+database_path = "/data/wallet.db"
+admin_password_hash_file = "admin-password.hash"
+# Lets Satchel pay Lightning Addresses whose servers are on private
+# addresses (over HTTPS), such as an app you run on this machine.
+allow_private_lnurl_hosts = true
+
+[lnd]
+rest_host = "172.29.42.11:8080"
+tls_cert_path = "tls.cert"
+macaroon_path = "satchel.macaroon"
+expected_network = "regtest"
+
+[faucet]
+enabled = true
+amount_sat = 100_000
+per_account_daily_sat = 500_000
+global_daily_sat = 2_000_000

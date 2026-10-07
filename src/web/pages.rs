@@ -64,6 +64,10 @@ pub(crate) fn layout(ctx: &Ctx<'_>, title: &str, content: Markup) -> Markup {
                 meta name="htmx-config" content=(HTMX_CONFIG);
                 title { (title) " - " (APP_NAME) }
                 link rel="stylesheet" href=(assets::url("app.css"));
+                link rel="manifest" href=(assets::url("manifest.webmanifest"));
+                link rel="icon" type="image/svg+xml" href=(assets::url("icon.svg"));
+                link rel="apple-touch-icon" href=(assets::url("apple-touch-icon.png"));
+                meta name="theme-color" content="#6b3fd4";
                 script src=(assets::url("htmx.min.js")) defer {}
                 script src=(assets::url("app.js")) defer {}
             }

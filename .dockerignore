@@ -1,0 +1,3 @@
+# The image is built from release archives in dist/ only.
+*
+!dist

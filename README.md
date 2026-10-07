@@ -1,176 +1,250 @@
 # Satchel
 
-> **Test networks only.** Satchel is a custodial, unaudited wallet for
-> Mutinynet, signet, testnet, and regtest. It refuses to start when its LND
-> node is on Bitcoin mainnet, and there is no flag to change that. Never use
-> it with real bitcoin.
+Give every tester a wallet and a Lightning Address on a test network, from
+one binary and one LND node. Satchel is a multi-account Lightning wallet that
+people open in a browser: they sign up, get `name@your-domain`, pay test
+invoices, and receive payouts and refunds. It exists because mobile wallets
+do not speak Mutinynet or signet, and the hosted test wallets that gave out
+Lightning Addresses have shut down (Mutiny's ended on 2024-12-31). If you
+build a Lightning app and want other people to try it on a test network,
+Satchel is the wallet you hand them.
 
-A small multi-account Lightning wallet with a Lightning Address for every
-account, built for people testing Lightning apps: sign up in a browser, pay
-test invoices, and receive payouts or refunds at `you@your-wallet-domain`.
+> **Test networks only: custodial, no recovery, never point it at mainnet.**
+> Satchel runs on Mutinynet, signet, testnet, and regtest. The operator's LND
+> node holds every balance; there is no seed, no export, and no way to recover
+> funds if the server or its database is lost. It refuses to start when its
+> LND node reports Bitcoin mainnet, and there is no flag to change that. It
+> has not been audited. Never use it with real bitcoin.
 
-One LND node holds the funds; each account's balance lives in an append-only
-SQLite ledger. Pages are server-rendered with [maud](https://maud.lambda.xyz)
-and [htmx](https://htmx.org); the only script is a small file for copy buttons
-and Nostr login.
+## Features
 
-Satchel is forked from [Koerier](https://github.com/tee8z/koerier), a
-Lightning Address server for LND (itself a fork of
-[luisschwab/koerier](https://github.com/luisschwab/koerier)), and keeps its
-history and its MIT OR Apache-2.0 licenses.
+- **Accounts**: username and password (argon2id), or a Nostr key through a
+  NIP-07 signer extension; one account can have both.
+- **Lightning Addresses**: every account gets `username@<domain>` over
+  LNURL-pay (LUD-06, LUD-12 comments, LUD-16), plus an LNURL QR code.
+- **Send and receive**: pay BOLT11 invoices, Lightning Addresses, and LNURLs;
+  create invoices with a QR code. A payment reserves the amount plus a
+  routing-fee budget and returns what is not spent.
+- **Internal transfers**: payments between two accounts on the same server
+  settle in the ledger without touching Lightning.
+- **Faucet** (off by default): operator-funded test sats with per-account,
+  per-address, and global daily caps.
+- **Operator page**: accounts, balances, liabilities against the node's
+  channel and on-chain balances, faucet use, freeze, credit, and IP blocks,
+  behind its own password and optionally on its own private origin.
+- **For integrators**: deep links (`/launch/lightning/{invoice}`) that open
+  the Send form, an "Open Satchel" handoff that signs a user in from your app
+  with their Nostr key, an address lookup API, and QR scanning on the Send
+  form. See [Integrate with your app](#integrate-with-your-app).
+- **Built to run in public**: a proof of work on every new account, per-address
+  limits sized for a conference crowd behind one NAT, global caps, and
+  operator IP blocks. See [Run it in public](#run-it-in-public).
+- **Metrics and health**: Prometheus metrics (totals only, never per account)
+  and `/healthz`, optionally on a private listener.
+- **Installable**: a web app manifest and icons, so phones can add it to the
+  home screen.
 
-## What it does
+Pages are server-rendered with [maud](https://maud.lambda.xyz) and
+[htmx](https://htmx.org), every form works without JavaScript, and balances
+live in an append-only SQLite ledger.
 
-- **Accounts**: username and password (argon2id), or Nostr login with a NIP-07
-  signer extension; an account can have both. Each account gets
-  `username@<domain>`.
-- **Receive**: LNURL-pay (LUD-06, LUD-12 comments, LUD-16 Lightning
-  Addresses) per account, and a "create invoice" form with a QR code.
-  Invoices are credited once, from LND's invoice stream, with reconciliation
-  at startup and every minute.
-- **Send**: paste a BOLT11 invoice, a Lightning Address, or an LNURL. The
-  amount plus a routing-fee budget is reserved first; unused budget or the
-  whole amount comes back when LND reports the result. Payments between two
-  accounts on this server settle inside the ledger without touching Lightning.
-- **Faucet** (off by default): operator-funded test sats with per-account and
-  global 24-hour limits, never more than the node's channel balance covers.
-- **Operator page**: accounts and balances, total liabilities against the
-  node's channel and on-chain balances, faucet usage, freeze and credit
-  actions. It uses its own password, separate from user accounts. With
-  `server.operator_url` it answers only on that origin (for example a
-  VPN-only name), and the public name returns 404 for `/admin`.
+## Screenshots
 
-## Safety model
+<!--
+  Screenshots are added after the first public deployment: sign-up, wallet
+  (balance, address, receive, send), a payment in flight, and the operator
+  page. Store them under docs/images/ and keep each one under 200 KB.
+-->
 
-- **Network guard**: at startup the server asks LND for its chain and network
-  and stops unless it is one of `testnet`, `testnet4`, `signet`, `regtest`,
-  or `simnet`. `lnd.expected_network` can pin one of them. Invoices are
-  decoded by LND, which rejects invoices for other networks, and `lnbc`
-  invoices are refused outright. Every page shows a "Test network only"
-  banner.
-- **Ledger**: balances are sums of ledger entries. SQLite triggers reject
-  updates, deletes, and any entry that would make a balance negative; every
-  entry has a unique idempotency key; all writes go through one connection
-  in `BEGIN IMMEDIATE` transactions. An invoice can credit one account once,
-  whether it is paid over Lightning or internally.
-- **Payments**: a payment whose outcome is unknown (for example, LND
-  restarted mid-flight) stays pending until reconciliation reads the result
-  from LND; it is refunded only when LND reports a failure or says it never
-  started the payment. Form submissions carry a request key, so a repeated
-  submission returns the first result instead of paying twice.
-- **Web**: session cookies are `__Host-`, `HttpOnly`, `SameSite=Lax`; every
-  state-changing request must come from this origin and carry the session's
-  CSRF token. A strict Content-Security-Policy allows only this site's own
-  scripts and styles. Login, sign-up, LNURL callbacks, payments, and invoice
-  creation are rate limited per client address and per account.
-- **Paying other servers**: Lightning Address lookups resolve the host once,
-  refuse loopback, private, and other non-public addresses, pin the
-  connection to the checked address, and follow no redirects. The invoice
-  returned must match the requested amount and the address metadata hash.
+## Quick start
 
-Run exactly one instance per database: the single writer and the
-in-memory record of payments in flight assume it. Not in scope: fund
-recovery, multi-node setups, mainnet hardening, or an audit. Treat every
-balance as an IOU from the operator.
+### Try it on regtest in a few minutes
 
-## Run
-
-Install Rust 1.95 or later, `pkg-config`, and the OpenSSL development
-headers. `nix develop` provides them.
+[`examples/regtest`](examples/regtest) runs bitcoind, two LND nodes with a
+channel between them, and Satchel with the faucet on, all on your machine:
 
 ```sh
-cargo build --release --locked
-cp example/config.toml.example config.toml
-./target/release/satchel hash-password < operator-password.txt > admin-password.hash
-./target/release/satchel --config config.toml
+cd examples/regtest
+./setup.sh
 ```
 
-The LND macaroon needs exactly these permissions:
+`setup.sh` starts the containers, mines blocks, funds and connects the
+nodes, bakes Satchel's macaroon, starts Satchel, and prints the URL to open.
+`./pay-address.sh <username> 1000` then pays your new Lightning Address from
+the second node. Docker with Compose v2 is all you need.
+
+### Release binary
+
+Each release has Linux archives for x86_64 and aarch64 with OpenSSL linked
+in. They are built on Ubuntu 24.04, so use a distribution at least that new
+(Debian 13, Ubuntu 24.04, Fedora 40, or later).
 
 ```sh
-lncli bakemacaroon --save_to wallet.macaroon \
+version=0.1.0
+system=x86_64-linux  # or aarch64-linux
+base=https://github.com/tee8z/satchel/releases/download/v$version
+curl -fLO "$base/satchel-$version-$system.tar.gz"
+curl -fLO "$base/satchel-$version-$system.tar.gz.sha256"
+sha256sum --check "satchel-$version-$system.tar.gz.sha256"
+tar -xzf "satchel-$version-$system.tar.gz"
+sudo install -m 0755 "satchel-$version-$system/bin/satchel" /usr/local/bin/satchel
+```
+
+Then write a configuration, an operator password hash, and an LND macaroon,
+and start it:
+
+```sh
+curl -fLo config.toml https://raw.githubusercontent.com/tee8z/satchel/master/example/config.toml.example
+$EDITOR config.toml   # public_url, lnd.rest_host, lnd.expected_network
+satchel hash-password < operator-password.txt > admin-password.hash
+lncli bakemacaroon --root_key_id 3001 --save_to wallet.macaroon \
   info:read invoices:read invoices:write offchain:read offchain:write onchain:read
+cp ~/.lnd/tls.cert tls.cert
+satchel --config config.toml
 ```
 
-Relative credential paths resolve under `CREDENTIALS_DIRECTORY` when systemd
-provides it, and otherwise beside the configuration file. The LND certificate
-must cover the IP address in `rest_host`.
+Put an HTTPS reverse proxy in front of it. [docs/operating.md](docs/operating.md)
+has Caddy and nginx examples, the macaroon details, and a systemd unit.
 
-Put an HTTPS reverse proxy in front of the private listener (see
-[the Caddy example](example/Caddyfile.example)) and set
-`server.client_ip_header` to the header it fills, so rate limits see real
-client addresses. Keep `/metrics` and `/healthz` private; with
-`server.metrics_address` they get their own listener.
+### Docker
 
-Environment variables: `SATCHEL_CONFIG` (config path),
-`SATCHEL_ADMIN_PASSWORD_HASH` (operator hash, instead of a file),
-`SATCHEL_LOG_JSON=true` (JSON logs), and `RUST_LOG` (log filter). Any
-setting can also be overridden with `SATCHEL_<SECTION>__<KEY>`, for example
-`SATCHEL_SERVER__PUBLIC_URL=https://wallet.example.org` or
-`SATCHEL_FAUCET__ENABLED=false`; values are read as TOML (numbers, booleans,
-arrays) and otherwise as strings, and are validated like the file.
+Each release publishes `ghcr.io/tee8z/satchel` for `linux/amd64` and
+`linux/arm64`. The image holds the release binary on a distroless base, runs
+as uid 65532, and keeps the database in the `/data` volume:
 
-`/healthz` answers `200` with `{"status":"ok","database":true,"invoice_stream":...}`
-while the database responds, and `503` when it does not. Whether the LND
-invoice stream is connected is reported but does not fail the check.
+```sh
+cd satchel-config  # config.toml, tls.cert, wallet.macaroon, admin-password.hash
+docker run -d --name satchel \
+  -v "$PWD:/etc/satchel:ro" \
+  -v satchel-data:/data \
+  -p 127.0.0.1:8095:8095 \
+  ghcr.io/tee8z/satchel:0.1.0
+```
+
+The image sets `server.bind_address` to `0.0.0.0:8095` and
+`server.database_path` to `/data/wallet.db`; relative credential paths
+resolve beside the configuration in `/etc/satchel`, and the files there must
+be readable by uid 65532. To hash the operator password:
+`docker run --rm -i ghcr.io/tee8z/satchel:0.1.0 hash-password < operator-password.txt`.
+[docs/docker.md](docs/docker.md) covers Compose and building the image
+yourself.
+
+### NixOS
+
+The flake exports `packages.<system>.satchel` and `nixosModules.default`
+(`services.satchel`):
+
+```nix
+{
+  inputs.satchel.url = "github:tee8z/satchel";
+
+  outputs = { nixpkgs, satchel, ... }: {
+    nixosConfigurations.wallet = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        satchel.nixosModules.default
+        {
+          services.satchel = {
+            enable = true;
+            publicUrl = "https://wallet.example.org";
+            clientIpHeader = "x-real-ip";
+            metricsAddress = "127.0.0.1:9095";
+            adminPasswordHashFile = "/run/secrets/satchel-admin.hash";
+            lnd = {
+              restHost = "127.0.0.1:8080";
+              tlsCertPath = "/var/lib/lnd/tls.cert";
+              macaroonPath = "/run/secrets/satchel.macaroon";
+              expectedNetwork = "signet";
+            };
+            faucet = { enabled = true; amount_sat = 10000; };
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+Credentials are loaded with systemd `LoadCredential` and never copied into
+the Nix store; the database lives in `/var/lib/satchel`. The module opens no
+firewall ports and configures no DNS or TLS.
 
 ## Configuration
 
-See [the complete example](example/config.toml.example). Amounts are in sats.
+One TOML file, passed with `--config` or `SATCHEL_CONFIG`. Any key can be
+overridden from the environment as `SATCHEL_<SECTION>__<KEY>`, for example
+`SATCHEL_FAUCET__ENABLED=false`. Amounts are in sats.
 
-| Section | Keys |
+| Section | What it controls |
 | --- | --- |
-| `[server]` | `bind_address`, `public_url` (HTTPS origin; addresses use its host), `operator_url` (optional separate origin for `/admin`), `database_path`, `metrics_address`, `client_ip_header`, `admin_password_hash_file`, `reserved_usernames`, `session_days`, `allow_private_lnurl_hosts` (local regtest only) |
-| `[lnd]` | `rest_host`, `tls_cert_path`, `macaroon_path`, `request_timeout_secs`, `payment_timeout_secs`, `expected_network` |
-| `[limits]` | `max_balance_sat`, `max_payment_sat`, `min_receive_sat`, `max_receive_sat`, `invoice_expiry_secs`, `fee_limit_ppm`, `min_fee_limit_sat` |
-| `[faucet]` | `enabled` (default `false`), `amount_sat`, `per_account_daily_sat`, `global_daily_sat` |
-| `[rate_limits]` | `login_per_ip_per_minute`, `login_per_account_per_hour`, `signup_per_ip_per_hour`, `lnurl_per_ip_per_minute`, `lnurl_per_account_per_minute`, `send_per_account_per_minute`, `receive_per_account_per_minute` |
+| `[server]` | listener, public origin (addresses use its host), operator origin, database, metrics listener, client address header, handoff origins |
+| `[lnd]` | REST address, TLS certificate, macaroon, timeouts, expected network |
+| `[limits]` | balance and payment caps, receive range, invoice expiry, routing-fee budget |
+| `[faucet]` | on or off, grant size, per-account, per-address, and global daily caps |
+| `[rate_limits]` | per-address, per-account, and global request limits |
+| `[pow]` | proof-of-work difficulty for new accounts |
 
-The balance cap is enforced when invoices are created; a payment that
-arrives for an existing invoice is always credited.
+Every key with its type, default, and meaning is in
+[docs/configuration.md](docs/configuration.md); a complete example is
+[example/config.toml.example](example/config.toml.example).
 
-## NixOS
+## Integrate with your app
 
-The flake exports `packages.<system>.satchel` for `x86_64-linux` and
-`aarch64-linux`, and `nixosModules.default` (`services.satchel`).
+If your app takes Lightning payments on a test network, Satchel can be the
+wallet your testers use:
 
-```nix
-services.satchel = {
-  enable = true;
-  publicUrl = "https://wallet.example.org";
-  operatorUrl = "https://wallet-admin.example.org:9443"; # optional, VPN-only
-  clientIpHeader = "x-forwarded-for";
-  metricsAddress = "127.0.0.1:9095";
-  adminPasswordHashFile = "/run/secrets/satchel-admin.hash";
-  lnd = {
-    restHost = "127.0.0.1:8080";
-    tlsCertPath = "/var/lib/lnd/tls.cert";
-    macaroonPath = "/run/secrets/satchel.macaroon";
-    expectedNetwork = "signet";
-  };
-  faucet = { enabled = true; amount_sat = 10000; };
-};
-```
+- Link to `https://wallet.example.org/launch/lightning/<bolt11>` to open the
+  Send form with the invoice filled in; the user taps **Pay**.
+- "Open Satchel": your page signs a Nostr event with the user's key and posts
+  it to Satchel, which signs them in (or offers to create a wallet) and opens
+  the link you pass.
+- Look up a user's Lightning Address with a NIP-98 signed request to
+  `/api/v1/address`, for example to fill in a payout address.
 
-Credentials stay host files loaded with systemd `LoadCredential`; the
-database lives in `/var/lib/satchel`. The module opens no firewall
-ports and configures no DNS or TLS.
+Event formats, CORS, and examples: [docs/integrating.md](docs/integrating.md).
 
-```sh
-nix build .#satchel
-nix flake check
-```
+## Run it in public
 
-## Metrics
+A public test wallet attracts sign-up scripts and faucet drainers. Satchel
+asks for a small proof of work on every new account, limits each client
+address with limits sized for a few hundred people behind one NAT, caps
+totals globally, and lets the operator block address ranges.
 
-`/metrics` (Prometheus text, every name prefixed `satchel_`) reports totals
-only, never per-account labels: accounts, frozen accounts, liabilities, the
-node's local channel balance, pending payments, open invoices, faucet use,
-payment and invoice counters, sign-ups, failed logins, rate-limited requests,
-and whether the LND invoice stream is connected (`satchel_invoice_stream_up`).
-A useful alert is `satchel_liabilities_msat > satchel_node_channel_local_msat`.
+- [docs/abuse-protection.md](docs/abuse-protection.md): the proof of work,
+  the limits, and IP blocks.
+- [docs/operating.md](docs/operating.md): LND requirements, the macaroon,
+  funding, reverse proxies, the operator origin, backups, upgrades, and what
+  to alert on.
+
+## How balances are kept
+
+- **Network guard**: at startup Satchel asks LND for its chain and network
+  and stops unless it is `testnet`, `testnet4`, `signet`, `regtest`, or
+  `simnet`; `lnd.expected_network` pins one. `lnbc` invoices are refused
+  outright, and LND rejects invoices for other networks.
+- **Ledger**: a balance is the sum of its ledger entries. SQLite triggers
+  reject updates, deletes, and any entry that would make a balance negative;
+  every entry has a unique idempotency key; all writes go through one
+  connection in `BEGIN IMMEDIATE` transactions. An invoice credits one
+  account once, whether it is paid over Lightning or internally.
+- **Payments**: a payment whose outcome is unknown stays pending until
+  reconciliation reads the result from LND; it is refunded only when LND
+  reports a failure or says the payment never started. Forms carry a request
+  key, so a repeated submission returns the first result instead of paying
+  twice.
+- **Web**: `__Host-` session cookies, `SameSite=Lax`, an origin check and a
+  CSRF token on every state change, and a strict Content-Security-Policy.
+- **Paying other servers**: Lightning Address lookups refuse private
+  addresses, pin the connection to the checked address, follow no
+  redirects, and check the returned invoice's amount and description hash.
+
+Run exactly one instance per database. Not in scope: fund recovery, several
+LND nodes, mainnet hardening, or an audit. Treat every balance as an IOU from
+the operator.
 
 ## Development
+
+`nix develop` provides Rust, `pkg-config`, and OpenSSL. Then:
 
 ```sh
 cargo fmt --all --check
@@ -178,17 +252,20 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
-The tests run against SQLite and an in-memory LND: exactly-once credits, no
-negative balances, idempotent requests, concurrent sends, refunds and
-reconciliation, internal transfers, the faucet limits, the LNURL endpoints,
-the mainnet refusal, Nostr login, CSRF and origin checks, environment
-overrides, `/healthz`, and the operator pages.
+The tests use SQLite and an in-memory LND, so no node is needed. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and
+[SECURITY.md](SECURITY.md) for reporting vulnerabilities. Changes are listed
+in [CHANGELOG.md](CHANGELOG.md).
 
-Release archives come from the [release workflow](.github/workflows/release.yml),
-which runs only by `workflow_dispatch`.
+## Credits
+
+Satchel is a fork of [Koerier](https://github.com/tee8z/koerier), a Lightning
+Address server for LND, itself a fork of
+[luisschwab/koerier](https://github.com/luisschwab/koerier) by Luis Schwab;
+the history is kept. 5day4cast uses Satchel for its Mutinynet testing.
 
 ## License
 
-MIT OR Apache-2.0, as in Koerier. See [LICENSE-MIT](LICENSE-MIT) and
-[LICENSE-APACHE](LICENSE-APACHE). htmx 4.0.0 is vendored under its own
-BSD Zero Clause license in `assets/vendor/htmx`.
+MIT OR Apache-2.0, at your option, as in Koerier. See
+[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). htmx is
+vendored under its own BSD Zero Clause license in `assets/vendor/htmx`.
