@@ -1,4 +1,5 @@
-//! The TOML configuration file. Amounts are in sats here and in msat at runtime.
+//! The TOML configuration file and `SATCHEL_<SECTION>__<KEY>` environment
+//! overrides. Amounts are in sats here and in msat at runtime.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -153,10 +154,51 @@ fn default_payment_timeout() -> u32 {
 /// Largest msat amount that survives a round trip through a JSON number.
 const MAX_SAFE_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
 
+/// Prefix of environment variables that override single settings.
+const ENV_PREFIX: &str = "SATCHEL_";
+
+/// Applies `SATCHEL_<SECTION>__<KEY>=<value>` overrides, for example
+/// `SATCHEL_SERVER__PUBLIC_URL` or `SATCHEL_FAUCET__ENABLED=true`. Values are
+/// read as TOML (numbers, booleans, arrays) and otherwise as plain strings.
+/// Variables without the double underscore, such as `SATCHEL_CONFIG`, are not settings.
+fn apply_env(table: &mut toml::Table, vars: impl IntoIterator<Item = (String, String)>) -> Result<()> {
+    for (name, raw) in vars {
+        let Some((section, key)) = name.strip_prefix(ENV_PREFIX).and_then(|rest| rest.split_once("__")) else {
+            continue;
+        };
+        if section.is_empty() || key.is_empty() {
+            bail!("environment variable {name} must look like {ENV_PREFIX}<SECTION>__<KEY>");
+        }
+        let value = toml::from_str::<toml::Table>(&format!("value = {raw}"))
+            .ok()
+            .and_then(|mut parsed| parsed.remove("value"))
+            .unwrap_or_else(|| toml::Value::String(raw));
+        let section = section.to_ascii_lowercase();
+        let entry = table
+            .entry(section.clone())
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+        let Some(settings) = entry.as_table_mut() else {
+            bail!("environment variable {name}: [{section}] is not a table");
+        };
+        settings.insert(key.to_ascii_lowercase(), value);
+    }
+    Ok(())
+}
+
 impl Config {
     pub(crate) fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).context("cannot read configuration file")?;
-        let config: Self = toml::from_str(&text).context("invalid TOML configuration")?;
+        // `std::env::vars` panics on non-UTF-8 variables; such variables are never settings.
+        let vars =
+            std::env::vars_os().filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+        Self::parse(&text, vars)
+    }
+
+    /// The TOML file with environment overrides applied, then validated.
+    pub(crate) fn parse(text: &str, vars: impl IntoIterator<Item = (String, String)>) -> Result<Self> {
+        let mut table: toml::Table = toml::from_str(text).context("invalid TOML configuration")?;
+        apply_env(&mut table, vars)?;
+        let config: Self = table.try_into().context("invalid configuration")?;
         config.validate()?;
         Ok(config)
     }
@@ -233,5 +275,39 @@ mod tests {
         let config: Config = toml::from_str(text).unwrap();
         config.validate().unwrap();
         assert!(!config.faucet.enabled || config.faucet.amount_sat > 0);
+    }
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn environment_overrides_single_settings() {
+        let text = include_str!("../example/config.toml.example");
+        let config = Config::parse(
+            text,
+            vars(&[
+                ("SATCHEL_SERVER__PUBLIC_URL", "https://pay.example.net"),
+                ("SATCHEL_SERVER__BIND_ADDRESS", "127.0.0.1:9000"),
+                ("SATCHEL_FAUCET__ENABLED", "false"),
+                ("SATCHEL_LIMITS__MAX_BALANCE_SAT", "50_000"),
+                ("SATCHEL_LND__EXPECTED_NETWORK", "regtest"),
+                ("SATCHEL_CONFIG", "/ignored.toml"),
+                ("OTHER__SETTING", "ignored"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(config.server.public_url, "https://pay.example.net");
+        assert_eq!(config.server.bind_address.port(), 9000);
+        assert!(!config.faucet.enabled);
+        assert_eq!(config.limits.max_balance_sat, 50_000);
+        assert_eq!(config.lnd.expected_network.as_deref(), Some("regtest"));
+        // Unknown keys and invalid values are refused, as in the file.
+        assert!(Config::parse(text, vars(&[("SATCHEL_SERVER__NO_SUCH_KEY", "1")])).is_err());
+        assert!(Config::parse(text, vars(&[("SATCHEL_SERVER__PUBLIC_URL", "http://example.org")])).is_err());
+        assert!(Config::parse(text, vars(&[("SATCHEL___KEY", "1")])).is_err());
     }
 }

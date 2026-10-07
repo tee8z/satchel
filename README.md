@@ -100,7 +100,11 @@ client addresses. Keep `/metrics` and `/healthz` private; with
 
 Environment variables: `SATCHEL_CONFIG` (config path),
 `SATCHEL_ADMIN_PASSWORD_HASH` (operator hash, instead of a file),
-`SATCHEL_LOG_JSON=true` (JSON logs), and `RUST_LOG` (log filter).
+`SATCHEL_LOG_JSON=true` (JSON logs), and `RUST_LOG` (log filter). Any
+setting can also be overridden with `SATCHEL_<SECTION>__<KEY>`, for example
+`SATCHEL_SERVER__PUBLIC_URL=https://wallet.example.org` or
+`SATCHEL_FAUCET__ENABLED=false`; values are read as TOML (numbers, booleans,
+arrays) and otherwise as strings, and are validated like the file.
 
 ## Configuration
 
