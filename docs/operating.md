@@ -416,13 +416,15 @@ Every metric is a total; none has a per-account label.
 | `satchel_faucet_grants_total` | counter | Faucet grants. |
 | `satchel_signups_total` | counter | Accounts created. |
 | `satchel_login_failures_total` | counter | Failed logins. |
-| `satchel_rate_limited_total` | counter | Requests refused by rate limits. |
+| `satchel_rate_limited_total{scope}` | counter | Requests refused by rate limits and global caps, by scope (`signup`, `signup-global`, `login-ip`, `lnurl-ip`, `send`, and so on). |
+| `satchel_blocked_requests_total` | counter | Requests refused by operator IP blocks. |
+| `satchel_pow_checks_total{outcome}` | counter | Proof-of-work solutions checked, `verified` or `rejected`. |
+| `satchel_pow_difficulty_bits` | gauge | Leading zero bits a new account needs now. |
+| `satchel_faucet_paid_msat_total` | counter | Faucet sats paid since start, in msat. |
 | `satchel_invoice_stream_up` | gauge | `1` while the LND invoice subscription is connected. |
 
-Counters start at zero when the process starts. Release v0.1.0 also adds
-metrics for blocked requests, proof-of-work results and the current
-difficulty, and faucet sats paid; see
-[abuse-protection.md](abuse-protection.md).
+Counters start at zero when the process starts. What the abuse-related
+metrics mean in practice: [abuse-protection.md](abuse-protection.md#metrics).
 
 ### What to alert on
 
@@ -451,7 +453,11 @@ groups:
       - alert: SatchelSignupSurge
         expr: increase(satchel_signups_total[1h]) > 500
       - alert: SatchelRateLimiting
-        expr: rate(satchel_rate_limited_total[5m]) > 1
+        expr: sum(rate(satchel_rate_limited_total[5m])) > 1
+        for: 10m
+      - alert: SatchelPowRejections
+        # Many bad proof-of-work solutions: usually a sign-up script.
+        expr: rate(satchel_pow_checks_total{outcome="rejected"}[10m]) > 0.5
         for: 10m
 ```
 

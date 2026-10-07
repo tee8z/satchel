@@ -55,7 +55,7 @@ as written.
 | `reserved_usernames` | list of strings | `[]` | Usernames nobody may register, on top of the built-in list (`admin`, `abuse`, `api`, `faucet`, and other operator and mailbox names). |
 | `session_days` | integer | `14` | How long a login lasts. |
 | `allow_private_lnurl_hosts` | boolean | `false` | Allow paying Lightning Addresses and LNURLs on loopback and private addresses. Only for local regtest setups, where the other wallet is on your machine. |
-| `handoff_origins` | list of URLs | `[]` | *Added in v0.1.0.* Origins of apps you trust to send users here with "Open Satchel". A handoff from one of these signs a known user in with one click; from anywhere else the user confirms first. The same origins may call `/api/v1/address` from the browser. They never skip the proof of work. See [integrating.md](integrating.md). |
+| `handoff_origins` | list of URLs | `[]` | *Added in v0.1.0.* HTTPS origins (no path) of apps you trust to send users here with "Open Satchel" (`POST /auth/nostr/handoff`). A handoff from one of these signs a known user in directly; from anywhere else the user confirms with one more click. The same origins may call `GET /api/v1/address` from the browser (CORS). They never skip the proof of work. See [integrating.md](integrating.md). |
 
 Usernames are 3 to 32 characters of `a-z`, `0-9`, `.`, `_`, and `-`,
 starting and ending with a letter or digit. Passwords need at least 10
@@ -83,6 +83,7 @@ characters.
 | `invoice_expiry_secs` | integer | `3600` | How long an invoice can be paid. |
 | `fee_limit_ppm` | integer | `10000` | Routing-fee budget for an outgoing payment, in parts per million of the amount (10000 is 1%). At most 1000000. |
 | `min_fee_limit_sat` | integer | `10` | The routing-fee budget is never smaller than this. |
+| `max_open_invoices` | integer | `100` | *Added in v0.1.0.* Unpaid, unexpired invoices one account may hold, counted separately for invoices the owner creates and invoices payers request through the Lightning Address. Must be positive. |
 
 The amount plus the fee budget is held while a payment is in flight; the
 unused part of the budget comes back when LND reports the result.
@@ -94,14 +95,14 @@ unused part of the budget comes back when LND reports the result.
 | `enabled` | boolean | `false` | Show the faucet on the wallet page. |
 | `amount_sat` | integer | `10000` | Sats per grant. |
 | `per_account_daily_sat` | integer | `20000` | Most one account can receive from the faucet in any 24 hours. |
+| `per_address_daily_sat` | integer | `250000` | *Added in v0.1.0.* Most the faucet gives to one client address (IPv4 address or IPv6 prefix) in any 24 hours. Everyone behind one NAT shares it, so size it for a crowd but below the global cap. |
 | `global_daily_sat` | integer | `500000` | Most the faucet gives out in any 24 hours, across all accounts. |
 
 When enabled, the amounts must satisfy
-`0 < amount_sat <= per_account_daily_sat <= global_daily_sat`. Grants are
-IOUs on the node's channel balance: a grant is refused when all balances
-together would exceed the node's local channel balance. *Added in v0.1.0:*
-a per-client-address daily cap, sized for many people behind one NAT; the
-exact key and default are listed in [abuse-protection.md](abuse-protection.md).
+`0 < amount_sat <= per_account_daily_sat <= global_daily_sat` and
+`amount_sat <= per_address_daily_sat`. Grants are IOUs on the node's channel
+balance: a grant is refused when all balances together would exceed the
+node's local channel balance.
 
 ## `[rate_limits]`
 
@@ -111,19 +112,22 @@ asking to retry later and increments `satchel_rate_limited_total`.
 
 | Key | Type | Default | Applies to |
 | --- | --- | --- | --- |
-| `login_per_ip_per_minute` | integer | `10` | Password logins, Nostr sign-in, and operator logins, per client address. |
+| `login_per_ip_per_minute` | integer | `120` | Password logins, Nostr sign-in challenges, and operator logins, per client address. |
 | `login_per_account_per_hour` | integer | `30` | Password attempts per username, including password changes. |
-| `signup_per_ip_per_hour` | integer | `5` | New accounts per client address, by password or Nostr. Raise it before an event where many people share one network. |
-| `lnurl_per_ip_per_minute` | integer | `60` | LNURL-pay requests (`/.well-known/lnurlp/…` and callbacks) per client address. |
+| `signup_per_ip_per_hour` | integer | `300` | Sign-up attempts per client address, by any path. |
+| `signups_global_per_hour` | integer | `1000` | *Added in v0.1.0.* Accounts created in the last hour across the whole service, by any path. |
+| `lnurl_per_ip_per_minute` | integer | `600` | LNURL-pay requests (`/.well-known/lnurlp/…` and callbacks) per client address. |
 | `lnurl_per_account_per_minute` | integer | `30` | LNURL invoices per receiving account. |
 | `send_per_account_per_minute` | integer | `10` | Send attempts per account. |
 | `receive_per_account_per_minute` | integer | `20` | Invoices created from the wallet page per account. |
+| `ipv6_prefix_len` | integer | `56` | *Added in v0.1.0.* IPv6 clients count as one address per prefix of this many bits, 16 to 128. |
 
-*Added in v0.1.0:* IPv6 addresses are grouped by a configurable prefix
-(default /56), the per-address defaults are sized for a conference crowd
-behind one NAT, and global caps bound account creations per hour and open
-invoices per account. The keys and defaults are listed in
-[abuse-protection.md](abuse-protection.md).
+The per-address defaults are sized for a few hundred people behind one
+conference NAT (v0.1.0 raised them from the much lower values Satchel
+started with); per-account limits stay tight, and the global cap bounds the
+total. For a private deployment, lower the per-address numbers. The
+reasoning behind each number is in
+[abuse-protection.md](abuse-protection.md#configuration-reference).
 
 ## `[pow]`
 
@@ -136,8 +140,8 @@ behind one address pays the same as anyone.
 | --- | --- | --- | --- |
 | `enabled` | boolean | `true` | Require the proof of work. |
 | `base_bits` | integer | `18` | Leading zero bits required when sign-ups are quiet; about a second on a phone. |
-| `max_bits` | integer | `22` | The most the difficulty can rise to. |
-| `step_signups` | integer | `200` | One more bit for every this many accounts created in the last hour across the whole service. |
+| `max_bits` | integer | `22` | The most the difficulty can rise to; at most 32 and at least `base_bits`. |
+| `step_signups` | integer | `200` | One more bit for every this many accounts created in the last hour across the whole service. Must be positive. |
 
 How it works and how to tune it: [abuse-protection.md](abuse-protection.md).
 
@@ -146,9 +150,10 @@ How it works and how to tune it: [abuse-protection.md](abuse-protection.md).
 `services.satchel` maps onto the same keys: `listenAddress`
 (`server.bind_address`), `publicUrl`, `operatorUrl`, `metricsAddress`,
 `clientIpHeader`, `adminPasswordHashFile`, `reservedUsernames`,
-`sessionDays`, `allowPrivateLnurlHosts`, and `lnd.{restHost, tlsCertPath,
-macaroonPath, expectedNetwork, requestTimeoutSecs, paymentTimeoutSecs}`. The
-`limits`, `faucet`, and `rateLimits` options take the TOML tables as
-attribute sets with the key names above. The database is always
+`sessionDays`, `allowPrivateLnurlHosts`, `handoffOrigins`, and
+`lnd.{restHost, tlsCertPath, macaroonPath, expectedNetwork,
+requestTimeoutSecs, paymentTimeoutSecs}`. The `limits`, `faucet`,
+`rateLimits`, and `pow` options take the TOML tables as attribute sets with
+the key names above. The database is always
 `/var/lib/satchel/wallet.db`, and credential files are passed with systemd
 `LoadCredential`.
