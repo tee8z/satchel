@@ -123,8 +123,7 @@ asking to retry later and increments `satchel_rate_limited_total`.
 | `ipv6_prefix_len` | integer | `56` | *Added in v0.1.0.* IPv6 clients count as one address per prefix of this many bits, 16 to 128. |
 
 The per-address defaults are sized for a few hundred people behind one
-conference NAT (v0.1.0 raised them from the much lower values Satchel
-started with); per-account limits stay tight, and the global cap bounds the
+conference NAT; per-account limits stay tight, and the global cap bounds the
 total. For a private deployment, lower the per-address numbers. The
 reasoning behind each number is in
 [abuse-protection.md](abuse-protection.md#configuration-reference).
