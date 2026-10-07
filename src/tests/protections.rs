@@ -298,6 +298,17 @@ async fn operator_blocks_refuse_every_public_route() {
         assert_eq!(lnurl_status(&reply), "ERROR", "{uri}: {}", reply.body);
         assert!(reply.body.contains("blocked"));
     }
+    // Deep links get the page; the address lookup, which apps call, gets JSON.
+    let launch = get_from(&h.app, "/launch/lightning/alice@wallet.example.org", blocked).await;
+    assert_eq!(launch.status, StatusCode::FORBIDDEN);
+    assert!(launch.body.contains("blocked requests from your network"));
+    let lookup = get_from(&h.app, "/api/v1/address", blocked).await;
+    assert_eq!(lookup.status, StatusCode::FORBIDDEN);
+    assert!(
+        lookup.body.starts_with('{') && lookup.body.contains("blocked"),
+        "{}",
+        lookup.body
+    );
     assert_eq!(get_from(&h.app, "/signup", elsewhere).await.status, StatusCode::OK);
     // The operator pages, static files and the health check stay reachable.
     assert_eq!(get_from(&h.app, "/admin/login", blocked).await.status, StatusCode::OK);
@@ -305,7 +316,7 @@ async fn operator_blocks_refuse_every_public_route() {
     let operator_page = get(&h.app, "/admin", Some(&cookie)).await;
     assert!(operator_page.body.contains("203.0.113.0/24"));
     assert!(operator_page.body.contains("spam sign-ups"));
-    assert!(metrics(&h.app).await.contains("satchel_blocked_requests_total 5\n"));
+    assert!(metrics(&h.app).await.contains("satchel_blocked_requests_total 7\n"));
 
     // Removing the block lets the network back in.
     let id = h.wallet.db.blocks().await.unwrap()[0].id;

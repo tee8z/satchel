@@ -7,6 +7,11 @@
 // SHA-256(challenge || 1457 as u64 big-endian)
 //   = 000010261cce78dd115e49ee09495c4c6d009ee79b4168c3f5ff1f6cee166e91
 // (19 leading zero bits). At difficulty 12 the first nonce is 1063.
+//
+// The 5day4cast coordinator's vector (coordinator_test_vector in src/pow.rs):
+// "AAECAwQFBgcICQoLDA0ODwAAAABqxpqYEAMhk91h_us6MSi5qOUB7I8" is first solved at
+// difficulty 16 by nonce 91039 (hash 0000ef4d...), and nonce 4294971180, above
+// 2^32, solves it at 12 bits.
 "use strict";
 
 (() => {

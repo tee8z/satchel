@@ -118,6 +118,11 @@ pub(super) fn refuse_blocked(app: &App, request: &Request, lnurl: bool, admin: b
     if lnurl {
         return Some(LnurlError::new("Requests from your network are blocked").into_response());
     }
+    // Scripts and other apps call these; they read JSON, not a page.
+    if path.starts_with("/api/") || matches!(path, "/auth/pow" | "/auth/nostr" | "/auth/nostr/challenge") {
+        let body = serde_json::json!({ "error": "Requests from your network are blocked" });
+        return Some((StatusCode::FORBIDDEN, Json(body)).into_response());
+    }
     let ctx = Ctx::visitor(&app.wallet.network);
     let page = pages::layout(
         &ctx,

@@ -287,6 +287,29 @@ mod tests {
         assert_eq!(first, Some(1063));
     }
 
+    /// The 5day4cast coordinator implements the same challenges; this is its
+    /// vector, so a challenge issued by either verifies the same way.
+    #[test]
+    fn coordinator_test_vector() {
+        let mut bytes = [0u8; CHALLENGE_LEN];
+        for (index, byte) in bytes[..16].iter_mut().enumerate() {
+            *byte = u8::try_from(index).unwrap();
+        }
+        bytes[16..24].copy_from_slice(&1_791_400_600_u64.to_be_bytes());
+        bytes[24] = 16;
+        let tag = hmac_sha256(&[0x42; 32], &bytes[..SIGNED_LEN]);
+        bytes[SIGNED_LEN..].copy_from_slice(&tag[..TAG_LEN]);
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(bytes),
+            "AAECAwQFBgcICQoLDA0ODwAAAABqxpqYEAMhk91h_us6MSi5qOUB7I8"
+        );
+        let first = (0..).find(|nonce| leading_zero_bits(&solution_hash(&bytes, *nonce)) >= 16);
+        assert_eq!(first, Some(91_039));
+        assert!(hex::encode(solution_hash(&bytes, 91_039)).starts_with("0000ef4d"));
+        // A nonce above 2^32 exercises the high word of the big-endian u64.
+        assert!(leading_zero_bits(&solution_hash(&bytes, 4_294_971_180)) >= 12);
+    }
+
     #[test]
     fn accepts_a_solution_once() {
         let pow = pow(6, 10, 200);
