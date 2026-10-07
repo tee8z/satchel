@@ -26,6 +26,7 @@ let
             enabled = true;
             amount_sat = 5000;
           };
+          pow.base_bits = 16;
         };
       }
     ];
@@ -72,6 +73,8 @@ pkgs.runCommand "satchel-module-check"
     assert lnd["expected_network"] == "signet"
     assert config["faucet"] == {"enabled": True, "amount_sat": 5000}
     assert config["limits"] == {}
+    assert config["pow"] == {"base_bits": 16}
+    assert config["rate_limits"] == {}
     assert "/run/" not in str(config)
     PY
     touch "$out"

@@ -15,6 +15,8 @@ pub(crate) enum WalletError {
     Frozen,
     NotFound,
     AlreadyPaid,
+    /// The account holds as many unpaid invoices as it may.
+    TooManyInvoices,
     Unavailable,
     Internal(anyhow::Error),
 }
@@ -37,6 +39,9 @@ impl fmt::Display for WalletError {
             Self::Frozen => f.write_str("This account is frozen. Contact the operator."),
             Self::NotFound => f.write_str("Not found."),
             Self::AlreadyPaid => f.write_str("This invoice is already paid or being paid."),
+            Self::TooManyInvoices => {
+                f.write_str("Too many unpaid invoices. Wait for one to be paid or to expire, then try again.")
+            }
             Self::Unavailable => f.write_str("The Lightning node is unavailable. Try again shortly."),
             Self::Internal(_) => f.write_str("Something went wrong. Try again."),
         }

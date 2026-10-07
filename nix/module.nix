@@ -40,6 +40,7 @@ let
     limits = cfg.limits;
     faucet = cfg.faucet;
     rate_limits = cfg.rateLimits;
+    pow = cfg.pow;
   };
   credentialPath = types.strMatching "/[^\n:]+";
 in
@@ -176,7 +177,22 @@ in
     rateLimits = mkOption {
       type = toml.type;
       default = { };
-      description = "The [rate_limits] table.";
+      example = {
+        signup_per_ip_per_hour = 300;
+        signups_global_per_hour = 1000;
+        ipv6_prefix_len = 56;
+      };
+      description = "The [rate_limits] table; see docs/abuse-protection.md for keys, defaults, and crowd sizing.";
+    };
+    pow = mkOption {
+      type = toml.type;
+      default = { };
+      example = {
+        base_bits = 18;
+        max_bits = 22;
+        step_signups = 200;
+      };
+      description = "The [pow] table: proof of work for creating accounts. On by default; see docs/abuse-protection.md.";
     };
   };
 

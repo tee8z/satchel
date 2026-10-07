@@ -8,7 +8,10 @@ mod handoff;
 mod launch;
 mod lnurlp;
 mod pages;
+mod protect;
 mod user;
+
+pub(crate) use protect::maintain_forever as maintain_protections;
 
 #[cfg(test)]
 pub(crate) use lnurlp::parse_callback_query as lnurlp_parse_callback_query;
@@ -27,7 +30,7 @@ use axum::http::header::{
     REFERRER_POLICY, SET_COOKIE, X_CONTENT_TYPE_OPTIONS, X_FRAME_OPTIONS,
 };
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
+use axum::http::{Extensions, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -35,17 +38,19 @@ use axum::{Json, Router};
 use url::Url;
 
 use crate::auth;
+use crate::blocklist::Blocklist;
 use crate::config::{Config, RateLimits, public_origin};
 use crate::db::Account;
-use crate::metrics::inc;
 use crate::nostr::Challenges;
+use crate::pow::Pow;
 use crate::ratelimit::{RateLimiter, client_key};
 use crate::util::constant_time_eq;
 use crate::wallet::Wallet;
 
-/// Scripts, styles, and connections from this origin only; nothing inline, no eval.
-const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
-     img-src 'self' data:; manifest-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+/// Scripts, workers, styles, manifests, and connections from this origin only; nothing inline, no eval.
+const CONTENT_SECURITY_POLICY_VALUE: &str = "default-src 'none'; script-src 'self'; worker-src 'self'; \
+     style-src 'self'; img-src 'self' data:; manifest-src 'self'; connect-src 'self'; form-action 'self'; \
+     base-uri 'none'; frame-ancestors 'none'";
 
 const OPERATOR_SESSION_SECS: i64 = 12 * 3600;
 
@@ -54,6 +59,10 @@ pub(crate) struct App {
     pub(crate) limiter: RateLimiter,
     pub(crate) rate: RateLimits,
     pub(crate) challenges: Challenges,
+    /// Proof of work for new accounts.
+    pub(crate) pow: Pow,
+    /// Operator blocks, loaded at startup and after each change.
+    pub(crate) blocks: Blocklist,
     /// The operator's argon2 hash; no hash, no operator pages.
     pub(crate) admin_hash: Option<String>,
     /// A separate origin for the operator pages; when set, `/admin` answers only there.
@@ -97,6 +106,8 @@ impl App {
             limiter: RateLimiter::default(),
             rate: config.rate_limits.clone(),
             challenges: Challenges::default(),
+            pow: Pow::new(&config.pow),
+            blocks: Blocklist::default(),
             admin_hash,
             operator_origin,
             client_ip_header,
@@ -125,11 +136,11 @@ impl App {
         host.is_some_and(|host| host.eq_ignore_ascii_case(&authority(origin)))
     }
 
-    /// Counts an attempt; false (and a metric) when over the limit.
+    /// Counts an attempt; false (and a metric for the scope) when over the limit.
     pub(crate) fn allow(&self, scope: &str, key: &str, limit: u32, window: Duration) -> bool {
         let allowed = self.limiter.allow(&format!("{scope}:{key}"), limit, window);
         if !allowed {
-            inc(&self.wallet.metrics.rate_limited);
+            self.wallet.metrics.rate_limited(scope);
         }
         allowed
     }
@@ -184,6 +195,7 @@ pub(crate) fn router(app: Shared) -> Router {
         .route("/signup", get(user::signup_page).post(user::signup))
         .route("/login", get(user::login_page).post(user::login))
         .route("/logout", post(user::logout))
+        .route("/auth/pow", post(protect::pow_challenge))
         .route("/auth/nostr/challenge", post(user::nostr_challenge))
         .route("/auth/nostr", post(user::nostr_auth))
         .route(handoff::PATH, post(handoff::start))
@@ -205,6 +217,8 @@ pub(crate) fn router(app: Shared) -> Router {
         .route("/admin/logout", post(admin::logout))
         .route("/admin/accounts/{id}/freeze", post(admin::freeze))
         .route("/admin/accounts/{id}/credit", post(admin::credit))
+        .route("/admin/blocks", post(protect::add_block))
+        .route("/admin/blocks/{id}/remove", post(protect::remove_block))
         .route("/.well-known/lnurlp/{username}", get(lnurlp::params))
         .route("/lnurlp/{username}/callback", get(lnurlp::callback))
         .route("/assets/{file}", get(assets::serve))
@@ -276,12 +290,15 @@ fn authority(url: &Url) -> String {
     }
 }
 
-/// Refuses cross-site writes and adds security headers to every response.
-/// Operator pages on their own origin may also post from that origin.
+/// Refuses blocked networks and cross-site writes, and adds security headers
+/// to every response. Operator pages on their own origin may also post from that origin.
 async fn guard(State(app): State<Shared>, request: Request, next: Next) -> Response {
     let path = request.uri().path();
     let lnurl = path.starts_with("/.well-known/lnurlp/") || path.starts_with("/lnurlp/");
     let admin = path == "/admin" || path.starts_with("/admin/");
+    if let Some(response) = protect::refuse_blocked(&app, &request, lnurl, admin) {
+        return secure(response, lnurl);
+    }
     let writes = !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS);
     // A handoff's credential is the signed event it carries, so other sites may post it.
     let signed_handoff = path == handoff::PATH;
@@ -296,7 +313,10 @@ async fn guard(State(app): State<Shared>, request: Request, next: Next) -> Respo
             return (StatusCode::FORBIDDEN, "Cross-site request refused.").into_response();
         }
     }
-    let mut response = next.run(request).await;
+    secure(next.run(request).await, lnurl)
+}
+
+fn secure(mut response: Response, lnurl: bool) -> Response {
     let headers = response.headers_mut();
     headers
         .entry(CACHE_CONTROL)
@@ -400,11 +420,33 @@ pub(crate) fn check_csrf(expected: &str, given: &str) -> Result<(), Reject> {
 
 /// The client's address: the trusted proxy's header when configured, else the peer.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ClientIp(pub(crate) IpAddr);
+pub(crate) struct ClientIp {
+    pub(crate) addr: IpAddr,
+    /// IPv6 clients count as one address per prefix of this length.
+    ipv6_prefix: u8,
+}
 
 impl ClientIp {
+    /// What per-address limits count under: an IPv4 address or an IPv6 prefix.
     pub(crate) fn key(self) -> String {
-        client_key(self.0)
+        client_key(self.addr, self.ipv6_prefix)
+    }
+
+    pub(crate) fn from_request(app: &App, headers: &HeaderMap, extensions: &Extensions) -> Self {
+        let forwarded = app
+            .client_ip_header
+            .as_ref()
+            .and_then(|name| headers.get(name))
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.rsplit(',').next())
+            .and_then(|value| value.trim().parse::<IpAddr>().ok());
+        let peer = extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(address)| address.ip());
+        Self {
+            addr: forwarded.or(peer).unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            ipv6_prefix: app.rate.ipv6_prefix_len,
+        }
     }
 }
 
@@ -412,18 +454,7 @@ impl FromRequestParts<Shared> for ClientIp {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, app: &Shared) -> Result<Self, Self::Rejection> {
-        let forwarded = app
-            .client_ip_header
-            .as_ref()
-            .and_then(|name| parts.headers.get(name))
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.rsplit(',').next())
-            .and_then(|value| value.trim().parse::<IpAddr>().ok());
-        let peer = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(address)| address.ip());
-        Ok(Self(forwarded.or(peer).unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))))
+        Ok(Self::from_request(app, &parts.headers, &parts.extensions))
     }
 }
 
@@ -447,7 +478,14 @@ impl UserSession {
         let Some(account_id) = session.account_id else {
             return Ok(None);
         };
-        let Some(account) = app.wallet.db.account(account_id).await? else {
+        // A frozen account is signed out everywhere, even mid-session.
+        let Some(account) = app
+            .wallet
+            .db
+            .account(account_id)
+            .await?
+            .filter(|account| !account.frozen)
+        else {
             return Ok(None);
         };
         Ok(Some(Self {

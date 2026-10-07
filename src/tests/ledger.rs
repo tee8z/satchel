@@ -9,6 +9,9 @@ use crate::util::{now, random_token, sha256};
 
 use super::{Harness, MockLnd, harness, harness_with};
 
+/// The client key faucet claims come from.
+const CLIENT: &str = "203.0.113.1";
+
 #[tokio::test]
 async fn startup_refuses_mainnet_nodes() {
     let mainnet = MockLnd::new("mainnet");
@@ -372,7 +375,7 @@ async fn own_invoices_mainnet_invoices_and_frozen_accounts_are_refused() {
     ));
     assert!(h.wallet.create_invoice(&frozen, 1_000, "", false).await.is_err());
     assert!(matches!(
-        h.wallet.faucet(&frozen, &random_token()).await,
+        h.wallet.faucet(&frozen, &random_token(), CLIENT).await,
         Err(WalletError::Frozen)
     ));
 }
@@ -393,22 +396,22 @@ async fn the_faucet_keeps_to_its_limits_and_the_node_balance() {
     let alice = h.account("alice").await;
     let bob = h.account("bob").await;
     let key = random_token();
-    h.wallet.faucet(&alice, &key).await.unwrap();
+    h.wallet.faucet(&alice, &key, CLIENT).await.unwrap();
     // The same click again is the same grant.
-    h.wallet.faucet(&alice, &key).await.unwrap();
+    h.wallet.faucet(&alice, &key, CLIENT).await.unwrap();
     assert_eq!(h.sats(&alice).await, 10_000);
-    h.wallet.faucet(&alice, &random_token()).await.unwrap();
-    let daily = h.wallet.faucet(&alice, &random_token()).await.unwrap_err();
+    h.wallet.faucet(&alice, &random_token(), CLIENT).await.unwrap();
+    let daily = h.wallet.faucet(&alice, &random_token(), CLIENT).await.unwrap_err();
     assert!(daily.to_string().contains("today's faucet allowance"), "{daily}");
-    h.wallet.faucet(&bob, &random_token()).await.unwrap();
-    let global = h.wallet.faucet(&bob, &random_token()).await.unwrap_err();
+    h.wallet.faucet(&bob, &random_token(), CLIENT).await.unwrap();
+    let global = h.wallet.faucet(&bob, &random_token(), CLIENT).await.unwrap_err();
     assert!(global.to_string().contains("today's sats"), "{global}");
     assert_eq!((h.sats(&alice).await, h.sats(&bob).await), (20_000, 10_000));
 
     let h = harness().await;
     let carol = h.account("carol").await;
     h.lnd.lock().channel_local_msat = 5_000_000;
-    let empty = h.wallet.faucet(&carol, &random_token()).await.unwrap_err();
+    let empty = h.wallet.faucet(&carol, &random_token(), CLIENT).await.unwrap_err();
     assert!(empty.to_string().contains("empty"), "{empty}");
 }
 

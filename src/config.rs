@@ -19,6 +19,8 @@ pub(crate) struct Config {
     pub(crate) faucet: Faucet,
     #[serde(default)]
     pub(crate) rate_limits: RateLimits,
+    #[serde(default)]
+    pub(crate) pow: Pow,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,6 +88,9 @@ pub(crate) struct Limits {
     pub(crate) fee_limit_ppm: u64,
     /// ... but never less than this many sats.
     pub(crate) min_fee_limit_sat: u64,
+    /// Unpaid, unexpired invoices an account may hold, counted separately for
+    /// its own invoices and those payers request through its address.
+    pub(crate) max_open_invoices: u32,
 }
 
 impl Default for Limits {
@@ -98,6 +103,7 @@ impl Default for Limits {
             invoice_expiry_secs: 3600,
             fee_limit_ppm: 10_000,
             min_fee_limit_sat: 10,
+            max_open_invoices: 100,
         }
     }
 }
@@ -109,6 +115,8 @@ pub(crate) struct Faucet {
     pub(crate) amount_sat: u64,
     /// Rolling 24-hour limits.
     pub(crate) per_account_daily_sat: u64,
+    /// Per client address, sized for a crowd sharing one (a conference NAT).
+    pub(crate) per_address_daily_sat: u64,
     pub(crate) global_daily_sat: u64,
 }
 
@@ -118,34 +126,67 @@ impl Default for Faucet {
             enabled: false,
             amount_sat: 10_000,
             per_account_daily_sat: 20_000,
+            per_address_daily_sat: 250_000,
             global_daily_sat: 500_000,
         }
     }
 }
 
-/// Attempts allowed per client address or account in each window.
+/// Attempts allowed per client address or account in each window. Limits per
+/// address are sized for a few hundred people behind one conference NAT;
+/// limits per account stay tight; global caps bound the total.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub(crate) struct RateLimits {
     pub(crate) login_per_ip_per_minute: u32,
     pub(crate) login_per_account_per_hour: u32,
     pub(crate) signup_per_ip_per_hour: u32,
+    /// Accounts created across the whole service in the last hour.
+    pub(crate) signups_global_per_hour: u32,
     pub(crate) lnurl_per_ip_per_minute: u32,
     pub(crate) lnurl_per_account_per_minute: u32,
     pub(crate) send_per_account_per_minute: u32,
     pub(crate) receive_per_account_per_minute: u32,
+    /// IPv6 clients count as one address per prefix of this length.
+    pub(crate) ipv6_prefix_len: u8,
 }
 
 impl Default for RateLimits {
     fn default() -> Self {
         Self {
-            login_per_ip_per_minute: 10,
+            login_per_ip_per_minute: 120,
             login_per_account_per_hour: 30,
-            signup_per_ip_per_hour: 5,
-            lnurl_per_ip_per_minute: 60,
+            signup_per_ip_per_hour: 300,
+            signups_global_per_hour: 1000,
+            lnurl_per_ip_per_minute: 600,
             lnurl_per_account_per_minute: 30,
             send_per_account_per_minute: 10,
             receive_per_account_per_minute: 20,
+            ipv6_prefix_len: 56,
+        }
+    }
+}
+
+/// Proof of work for creating accounts. Difficulty is global, never per
+/// address: one more bit for every `step_signups` accounts created in the
+/// last hour, from `base_bits` up to `max_bits`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub(crate) struct Pow {
+    pub(crate) enabled: bool,
+    /// Leading zero bits when sign-ups are quiet; 18 takes about a second on a phone.
+    pub(crate) base_bits: u8,
+    pub(crate) max_bits: u8,
+    pub(crate) step_signups: u32,
+}
+
+impl Default for Pow {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            base_bits: 18,
+            max_bits: 22,
+            step_signups: 200,
         }
     }
 }
@@ -248,6 +289,22 @@ impl Config {
                 || msat(self.faucet.global_daily_sat).is_none())
         {
             bail!("faucet amounts must satisfy 0 < amount_sat <= per_account_daily_sat <= global_daily_sat");
+        }
+        if self.faucet.enabled
+            && (self.faucet.amount_sat > self.faucet.per_address_daily_sat
+                || msat(self.faucet.per_address_daily_sat).is_none())
+        {
+            bail!("faucet.per_address_daily_sat must be at least amount_sat");
+        }
+        if limits.max_open_invoices == 0 {
+            bail!("limits.max_open_invoices must be positive");
+        }
+        if !(16..=128).contains(&self.rate_limits.ipv6_prefix_len) {
+            bail!("rate_limits.ipv6_prefix_len must be between 16 and 128");
+        }
+        let pow = &self.pow;
+        if pow.base_bits > pow.max_bits || pow.max_bits > 32 || pow.step_signups == 0 {
+            bail!("pow needs base_bits <= max_bits <= 32 and a positive step_signups");
         }
         if self.lnd.request_timeout_secs == 0 || self.lnd.payment_timeout_secs == 0 || self.server.session_days == 0 {
             bail!("timeouts and session_days must be positive");

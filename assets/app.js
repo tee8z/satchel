@@ -1,5 +1,6 @@
-// Satchel: copy buttons, Nostr (NIP-07) login, and the QR scanner on Send.
-// Everything else is server-rendered; htmx handles forms and status polling.
+// Satchel: copy buttons, Nostr (NIP-07) login, the QR scanner on Send, and
+// the sign-up proof of work. Everything else is server-rendered; htmx handles
+// forms and status polling.
 "use strict";
 
 document.addEventListener("click", (event) => {
@@ -50,6 +51,94 @@ async function postJson(url, body) {
   }
 }
 
+// Proof of work for new wallets (see src/pow.rs). A form that creates an
+// account carries hidden pow_challenge/pow_nonce fields and a marker with the
+// worker's URL; solving starts as soon as the page loads, so it is usually
+// done before the form is filled in.
+const powMarker = document.querySelector("[data-pow-worker]");
+const pow = powMarker ? powSolver(powMarker) : null;
+
+function powSolver(marker) {
+  const form = marker.closest("form");
+  const field = (name) => form && form.querySelector(`input[name="${name}"]`);
+  const fields = { challenge: field("pow_challenge"), nonce: field("pow_nonce") };
+  let worker = null;
+  let solution = null;
+  let current = null;
+
+  function start() {
+    if (worker) worker.terminate();
+    solution = null;
+    if (fields.challenge) fields.challenge.value = "";
+    if (fields.nonce) fields.nonce.value = "";
+    current = (async () => {
+      const issued = await postJson("/auth/pow", {});
+      if (!issued.challenge) throw new Error(issued.error || "Could not prepare the sign-up check.");
+      const nonce = await new Promise((resolve, reject) => {
+        worker = new Worker(marker.dataset.powWorker);
+        worker.onmessage = (event) => resolve(event.data.nonce);
+        worker.onerror = () => reject(new Error("The sign-up check failed in this browser."));
+        worker.postMessage({
+          sha256: marker.dataset.powSha256,
+          challenge: issued.challenge,
+          difficulty: issued.difficulty,
+        });
+      });
+      worker.terminate();
+      worker = null;
+      if (fields.challenge) fields.challenge.value = issued.challenge;
+      if (fields.nonce) fields.nonce.value = nonce;
+      solution = { challenge: issued.challenge, nonce, expiresAt: issued.expires_at };
+      return solution;
+    })();
+    // Failures surface when the form is submitted.
+    current.catch(() => {});
+    return current;
+  }
+
+  // Solved, with at least half a minute left to use it.
+  function fresh() {
+    return solution !== null && solution.expiresAt * 1000 - Date.now() > 30000;
+  }
+
+  // A usable solution: the current one, or a new one if it failed or is about to expire.
+  async function ready() {
+    try {
+      await current;
+    } catch {
+      return start();
+    }
+    return fresh() ? solution : start();
+  }
+
+  if (form) {
+    form.addEventListener("submit", async (event) => {
+      if (fresh()) return;
+      event.preventDefault();
+      const button = form.querySelector('button[type="submit"]');
+      const status = form.querySelector(".pow-status");
+      const label = button ? button.textContent : "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Preparing…";
+      }
+      try {
+        await ready();
+        form.submit();
+      } catch (error) {
+        if (status) status.textContent = error && error.message ? error.message : "The sign-up check failed.";
+        if (button) {
+          button.disabled = false;
+          button.textContent = label;
+        }
+      }
+    });
+  }
+
+  start();
+  return { ready, restart: start };
+}
+
 async function nostrAuth(button) {
   const status = button.parentElement.querySelector(".nostr-status");
   const say = (text) => {
@@ -73,6 +162,13 @@ async function nostrAuth(button) {
   if (button.dataset.next) body.next = button.dataset.next;
   button.disabled = true;
   try {
+    if (mode === "signup" && pow) {
+      say("Preparing…");
+      const solution = await pow.ready();
+      body.pow_challenge = solution.challenge;
+      body.pow_nonce = solution.nonce;
+      say("");
+    }
     const challenge = await postJson("/auth/nostr/challenge", {});
     if (challenge.error) throw new Error(challenge.error);
     body.event = await window.nostr.signEvent({
@@ -91,6 +187,8 @@ async function nostrAuth(button) {
       return;
     }
     say(result.error || "Nostr login failed.");
+    // The attempt may have used up the solution; prepare the next one.
+    if (mode === "signup" && pow) pow.restart();
   } catch (error) {
     say(error && error.message ? error.message : "Nostr login failed.");
   } finally {

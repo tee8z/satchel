@@ -5,6 +5,7 @@ mod handoff_flows;
 mod ledger;
 mod lnurl_endpoints;
 mod mock;
+mod protections;
 mod web_flows;
 
 use std::sync::Arc;
@@ -50,6 +51,11 @@ pub(crate) fn test_config() -> Config {
         amount_sat = 10_000
         per_account_daily_sat = 20_000
         global_daily_sat = 30_000
+
+        # Tests solve the proof of work in a few dozen hashes.
+        [pow]
+        base_bits = 4
+        max_bits = 8
         "#,
     )
     .unwrap();

@@ -8,6 +8,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{App, ClientIp, Shared};
+use crate::abuse;
 use crate::db::Account;
 use crate::error::{LnurlError, WalletError};
 use crate::lnurl::{self, COMMENT_ALLOWED};
@@ -118,11 +119,20 @@ pub(super) async fn callback(
             WalletError::LimitExceeded(_) | WalletError::Frozen => {
                 LnurlError::new("Amount is outside the accepted range")
             }
+            WalletError::TooManyInvoices => LnurlError::new("This address has too many unpaid invoices; retry later"),
             WalletError::Unavailable => LnurlError::new("Could not create an invoice; retry later"),
             other => {
                 tracing::error!(error = %other, "LNURL invoice failed");
                 LnurlError::new("Could not create an invoice")
             }
         })?;
+    let recorded = app
+        .wallet
+        .db
+        .record_client_event(abuse::LNURL_INVOICE, &ip.key(), account.id, invoice.amount_msat)
+        .await;
+    if let Err(error) = recorded {
+        tracing::error!(%error, "cannot record an LNURL invoice request");
+    }
     Ok(Json(json!({ "pr": invoice.bolt11, "routes": [] })))
 }

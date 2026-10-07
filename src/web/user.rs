@@ -69,6 +69,10 @@ pub(super) struct SignupForm {
     /// Nostr key the server holds behind it.
     #[serde(default)]
     handoff: String,
+    #[serde(default)]
+    pow_challenge: String,
+    #[serde(default)]
+    pow_nonce: String,
 }
 
 /// Every new wallet comes through here, from the password form or a handoff.
@@ -107,19 +111,25 @@ pub(super) async fn signup(
         Ok(username) => username,
         Err(message) => return Ok(retry(message)),
     };
-    let (hash, nostr_pubkey) = match &pending {
-        Some(pending) => {
-            if app.wallet.db.account_by_nostr(&pending.nostr_pubkey).await?.is_some() {
-                return Ok(retry(
-                    "This Nostr key already has a wallet. Go back to the app and open it again.",
-                ));
-            }
-            (None, Some(pending.nostr_pubkey.as_str()))
+    if let Some(pending) = &pending {
+        if app.wallet.db.account_by_nostr(&pending.nostr_pubkey).await?.is_some() {
+            return Ok(retry(
+                "This Nostr key already has a wallet. Go back to the app and open it again.",
+            ));
         }
+    } else if let Err(message) = auth::check_new_password(&form.password, &form.confirm) {
+        return Ok(retry(message));
+    }
+    if app.wallet.db.account_by_username(&username).await?.is_some() {
+        return Ok(retry("That username is taken."));
+    }
+    // Both ways in pay the proof of work, before any password hashing.
+    if let Some(message) = app.refuse_new_account(&form.pow_challenge, &form.pow_nonce).await? {
+        return Ok(retry(message));
+    }
+    let (hash, nostr_pubkey) = match &pending {
+        Some(pending) => (None, Some(pending.nostr_pubkey.as_str())),
         None => {
-            if let Err(message) = auth::check_new_password(&form.password, &form.confirm) {
-                return Ok(retry(message));
-            }
             let password = form.password.clone();
             let hash = tokio::task::spawn_blocking(move || auth::hash_password(&password))
                 .await
@@ -144,6 +154,7 @@ pub(super) async fn signup(
         Err(error) => return Err(error.into()),
     };
     inc(&app.wallet.metrics.signups);
+    app.note_new_account(account.id, ip).await;
     tracing::info!(account = account.id, handoff = pending.is_some(), "account created");
     let next = match &pending {
         Some(pending) => {
@@ -221,6 +232,9 @@ pub(super) async fn login(
         inc(&app.wallet.metrics.login_failures);
         return Ok(retry("Wrong username or password."));
     };
+    if account.frozen {
+        return Ok(retry("This account is frozen. Contact the operator."));
+    }
     let cookie = app.start_session(Some(account.id)).await?;
     Ok(redirect_with_cookie(&next, cookie))
 }
@@ -272,6 +286,11 @@ pub(super) struct NostrAuth {
     csrf: String,
     #[serde(default)]
     next: String,
+    /// Proof of work, for `signup`.
+    #[serde(default)]
+    pow_challenge: String,
+    #[serde(default)]
+    pow_nonce: String,
 }
 
 /// Logs in, signs up, or links a key with a signed NIP-98-style event.
@@ -297,6 +316,12 @@ pub(super) async fn nostr_auth(
                     "No wallet uses this Nostr key yet. Sign up first.",
                 ));
             };
+            if account.frozen {
+                return Ok(json_error(
+                    StatusCode::FORBIDDEN,
+                    "This account is frozen. Contact the operator.",
+                ));
+            }
             let cookie = app.start_session(Some(account.id)).await?;
             Ok(json_redirect(&safe_next(&body.next), Some(cookie)))
         }
@@ -317,6 +342,12 @@ pub(super) async fn nostr_auth(
                     "This Nostr key already has a wallet. Log in instead.",
                 ));
             }
+            if db.account_by_username(&username).await?.is_some() {
+                return Ok(json_error(StatusCode::CONFLICT, "That username is taken."));
+            }
+            if let Some(message) = app.refuse_new_account(&body.pow_challenge, &body.pow_nonce).await? {
+                return Ok(json_error(StatusCode::FORBIDDEN, message));
+            }
             let account = match db.create_account(&username, None, Some(&pubkey)).await {
                 Ok(account) => account,
                 Err(error) if is_unique_violation(&error) => {
@@ -325,6 +356,7 @@ pub(super) async fn nostr_auth(
                 Err(error) => return Err(error.into()),
             };
             inc(&app.wallet.metrics.signups);
+            app.note_new_account(account.id, ip).await;
             tracing::info!(account = account.id, "account created with Nostr");
             let cookie = app.start_session(Some(account.id)).await?;
             Ok(json_redirect("/wallet", Some(cookie)))
@@ -586,11 +618,12 @@ pub(super) struct FaucetForm {
 pub(super) async fn faucet(
     State(app): State<Shared>,
     session: UserSession,
+    ip: ClientIp,
     headers: HeaderMap,
     Form(form): Form<FaucetForm>,
 ) -> Result<Response, Reject> {
     check_csrf(&session.csrf, &form.csrf)?;
-    let result = app.wallet.faucet(&session.account, &form.key).await;
+    let result = app.wallet.faucet(&session.account, &form.key, &ip.key()).await;
     let amount = faucet_amount(&app);
     let section = match &result {
         Ok(payment) => pages::faucet_section(&session.csrf, &random_token(), amount, Some(Ok(payment))),
