@@ -1,6 +1,7 @@
 //! Integration tests: the wallet, ledger, LNURL endpoints, and web flows
 //! against a real SQLite database and an in-memory LND.
 
+mod handoff_flows;
 mod ledger;
 mod lnurl_endpoints;
 mod mock;
