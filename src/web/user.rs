@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -11,10 +11,11 @@ use maud::{Markup, html};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::pages::{self, Ctx, ReceiveState, SendValues};
+use super::pages::{self, Ctx, HandoffSignup, ReceiveState, SendValues};
 use super::{App, ClientIp, Reject, Shared, UserSession, check_csrf, is_htmx, redirect, redirect_with_cookie};
 use crate::auth;
 use crate::error::WalletError;
+use crate::handoff::{DEFAULT_NEXT, Purpose, safe_next, short_npub};
 use crate::lnurl;
 use crate::metrics::inc;
 use crate::nostr;
@@ -32,7 +33,7 @@ fn is_unique_violation(error: &sqlx::Error) -> bool {
 }
 
 /// The message to show for a wallet error; unexpected ones are logged.
-fn shown(error: &WalletError) -> String {
+pub(super) fn shown(error: &WalletError) -> String {
     if let WalletError::Internal(source) = error {
         tracing::error!(error = %source, "wallet operation failed");
     }
@@ -60,17 +61,45 @@ pub(super) async fn signup_page(State(app): State<Shared>, headers: HeaderMap) -
 #[derive(Deserialize)]
 pub(super) struct SignupForm {
     username: String,
+    #[serde(default)]
     password: String,
+    #[serde(default)]
     confirm: String,
+    /// A pending handoff token instead of a password: the new wallet uses the
+    /// Nostr key the server holds behind it.
+    #[serde(default)]
+    handoff: String,
 }
 
+/// Every new wallet comes through here, from the password form or a handoff.
 pub(super) async fn signup(
     State(app): State<Shared>,
     ip: ClientIp,
     Form(form): Form<SignupForm>,
 ) -> Result<Response, Reject> {
     let ctx = Ctx::visitor(&app.wallet.network);
-    let retry = |message: &str| pages::signup(&ctx, &app.wallet.domain, Some(message), &form.username).into_response();
+    let pending = match form.handoff.as_str() {
+        "" => None,
+        token => match app.wallet.db.pending_handoff(token, Purpose::SignUp).await? {
+            Some(pending) => Some(pending),
+            None => return Ok(super::handoff::expired(&ctx)),
+        },
+    };
+    let npub = pending.as_ref().map(|pending| short_npub(&pending.nostr_pubkey));
+    let handoff_page = npub.as_deref().map(|npub| HandoffSignup {
+        token: &form.handoff,
+        npub,
+    });
+    let retry = |message: &str| {
+        pages::signup_with(
+            &ctx,
+            &app.wallet.domain,
+            Some(message),
+            &form.username,
+            handoff_page.as_ref(),
+        )
+        .into_response()
+    };
     if !app.allow("signup", &ip.key(), app.rate.signup_per_ip_per_hour, HOUR) {
         return Ok(retry("Too many new wallets from your network. Try again later."));
     }
@@ -78,36 +107,90 @@ pub(super) async fn signup(
         Ok(username) => username,
         Err(message) => return Ok(retry(message)),
     };
-    if let Err(message) = auth::check_new_password(&form.password, &form.confirm) {
-        return Ok(retry(message));
-    }
-    let password = form.password.clone();
-    let hash = tokio::task::spawn_blocking(move || auth::hash_password(&password))
+    let (hash, nostr_pubkey) = match &pending {
+        Some(pending) => {
+            if app.wallet.db.account_by_nostr(&pending.nostr_pubkey).await?.is_some() {
+                return Ok(retry(
+                    "This Nostr key already has a wallet. Go back to the app and open it again.",
+                ));
+            }
+            (None, Some(pending.nostr_pubkey.as_str()))
+        }
+        None => {
+            if let Err(message) = auth::check_new_password(&form.password, &form.confirm) {
+                return Ok(retry(message));
+            }
+            let password = form.password.clone();
+            let hash = tokio::task::spawn_blocking(move || auth::hash_password(&password))
+                .await
+                .map_err(|_| Reject::Server)?
+                .map_err(|_| Reject::Server)?;
+            (Some(hash), None)
+        }
+    };
+    let account = match app
+        .wallet
+        .db
+        .create_account(&username, hash.as_deref(), nostr_pubkey)
         .await
-        .map_err(|_| Reject::Server)?
-        .map_err(|_| Reject::Server)?;
-    let account = match app.wallet.db.create_account(&username, Some(&hash), None).await {
+    {
         Ok(account) => account,
+        Err(error) if is_unique_violation(&error) && nostr_pubkey.is_some() && !taken(&error) => {
+            return Ok(retry(
+                "This Nostr key already has a wallet. Go back to the app and open it again.",
+            ));
+        }
         Err(error) if is_unique_violation(&error) => return Ok(retry("That username is taken.")),
         Err(error) => return Err(error.into()),
     };
     inc(&app.wallet.metrics.signups);
-    tracing::info!(account = account.id, "account created");
+    tracing::info!(account = account.id, handoff = pending.is_some(), "account created");
+    let next = match &pending {
+        Some(pending) => {
+            app.wallet
+                .db
+                .take_pending_handoff(&form.handoff, Purpose::SignUp)
+                .await?;
+            pending.next.clone()
+        }
+        None => DEFAULT_NEXT.to_owned(),
+    };
     let cookie = app.start_session(Some(account.id)).await?;
-    Ok(redirect_with_cookie("/wallet", cookie))
+    Ok(redirect_with_cookie(&next, cookie))
 }
 
-pub(super) async fn login_page(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Reject> {
+/// Whether a unique violation was on the username (and not the Nostr key).
+fn taken(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|database| database.message().contains("accounts.username"))
+}
+
+#[derive(Deserialize)]
+pub(super) struct NextQuery {
+    #[serde(default)]
+    next: String,
+}
+
+pub(super) async fn login_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(query): Query<NextQuery>,
+) -> Result<Response, Reject> {
+    let next = safe_next(&query.next);
     if UserSession::from_headers(&app, &headers).await?.is_some() {
-        return Ok(redirect("/wallet"));
+        return Ok(redirect(&next));
     }
-    Ok(pages::login(&Ctx::visitor(&app.wallet.network), None, "").into_response())
+    Ok(pages::login(&Ctx::visitor(&app.wallet.network), None, "", &next).into_response())
 }
 
 #[derive(Deserialize)]
 pub(super) struct LoginForm {
     username: String,
     password: String,
+    /// Where to go afterwards, such as a deep link that sent the visitor here.
+    #[serde(default)]
+    next: String,
 }
 
 pub(super) async fn login(
@@ -116,7 +199,8 @@ pub(super) async fn login(
     Form(form): Form<LoginForm>,
 ) -> Result<Response, Reject> {
     let ctx = Ctx::visitor(&app.wallet.network);
-    let retry = |message: &str| pages::login(&ctx, Some(message), &form.username).into_response();
+    let next = safe_next(&form.next);
+    let retry = |message: &str| pages::login(&ctx, Some(message), &form.username, &next).into_response();
     let username = form.username.trim().to_ascii_lowercase();
     if !app.allow("login-ip", &ip.key(), app.rate.login_per_ip_per_minute, MINUTE)
         || !app.allow("login-account", &username, app.rate.login_per_account_per_hour, HOUR)
@@ -138,7 +222,7 @@ pub(super) async fn login(
         return Ok(retry("Wrong username or password."));
     };
     let cookie = app.start_session(Some(account.id)).await?;
-    Ok(redirect_with_cookie("/wallet", cookie))
+    Ok(redirect_with_cookie(&next, cookie))
 }
 
 #[derive(Deserialize)]
@@ -186,6 +270,8 @@ pub(super) struct NostrAuth {
     username: String,
     #[serde(default)]
     csrf: String,
+    #[serde(default)]
+    next: String,
 }
 
 /// Logs in, signs up, or links a key with a signed NIP-98-style event.
@@ -212,7 +298,7 @@ pub(super) async fn nostr_auth(
                 ));
             };
             let cookie = app.start_session(Some(account.id)).await?;
-            Ok(json_redirect("/wallet", Some(cookie)))
+            Ok(json_redirect(&safe_next(&body.next), Some(cookie)))
         }
         "signup" => {
             if !app.allow("signup", &ip.key(), app.rate.signup_per_ip_per_hour, HOUR) {
@@ -460,6 +546,7 @@ pub(super) async fn send(
                 destination: &form.destination,
                 amount: &form.amount_sat,
                 comment: &form.comment,
+                ..SendValues::default()
             };
             pages::send_section(&session.csrf, &random_token(), &values, Some(Err(&shown(error))))
         }

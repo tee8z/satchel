@@ -1,5 +1,5 @@
-// Satchel: copy buttons and Nostr (NIP-07) login. Everything else is
-// server-rendered; htmx handles forms and status polling.
+// Satchel: copy buttons, Nostr (NIP-07) login, and the QR scanner on Send.
+// Everything else is server-rendered; htmx handles forms and status polling.
 "use strict";
 
 document.addEventListener("click", (event) => {
@@ -13,7 +13,14 @@ document.addEventListener("click", (event) => {
   if (nostr) {
     event.preventDefault();
     nostrAuth(nostr);
+    return;
   }
+  const scan = target && target.closest("[data-scan]");
+  if (scan) {
+    startScan(scan);
+    return;
+  }
+  if (target && target.closest("[data-scan-stop]")) stopScan();
 });
 
 async function copyText(button) {
@@ -63,6 +70,7 @@ async function nostrAuth(button) {
     }
   }
   if (mode === "link") body.csrf = button.dataset.csrf;
+  if (button.dataset.next) body.next = button.dataset.next;
   button.disabled = true;
   try {
     const challenge = await postJson("/auth/nostr/challenge", {});
@@ -88,4 +96,110 @@ async function nostrAuth(button) {
   } finally {
     button.disabled = false;
   }
+}
+
+// QR scanning fills the Send field from the camera. It needs the browser's
+// BarcodeDetector (Chromium on Android, ChromeOS, and macOS); elsewhere the
+// Scan button stays hidden and people paste instead.
+const canScan =
+  "BarcodeDetector" in window && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+let scanning = null;
+
+function showScanners() {
+  if (scanning && !scanning.view.isConnected) stopScan();
+  for (const box of document.querySelectorAll("[data-scanner][hidden]")) box.hidden = false;
+}
+
+if (canScan) {
+  showScanners();
+  // htmx replaces the Send section after each payment; show the new scanner too.
+  new MutationObserver(showScanners).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) stopScan();
+  });
+}
+
+// What a QR code holds, as the Send field takes it: BIP21 URIs give their
+// lightning= invoice, a lightning: prefix is dropped, and anything that is not
+// an invoice, LNURL, or Lightning Address is ignored.
+function lightningText(raw) {
+  const text = String(raw || "").trim();
+  if (/^bitcoin:/i.test(text)) {
+    const query = text.split("?")[1] || "";
+    for (const [key, value] of new URLSearchParams(query)) {
+      if (key.toLowerCase() === "lightning" && value.trim()) return value.trim();
+    }
+    return null;
+  }
+  const value = text.replace(/^lightning:/i, "").trim();
+  return /^ln/i.test(value) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value) ? value : null;
+}
+
+async function startScan(button) {
+  const box = button.closest("[data-scanner]");
+  const view = box.querySelector("[data-scan-view]");
+  const video = view.querySelector("video");
+  const status = box.querySelector(".scan-status");
+  const field = document.getElementById(button.dataset.scan);
+  const say = (text) => {
+    status.textContent = text;
+    status.hidden = !text;
+  };
+  stopScan();
+  say("");
+  button.disabled = true;
+  try {
+    const formats = await window.BarcodeDetector.getSupportedFormats();
+    if (!formats.includes("qr_code")) throw new Error("This browser cannot read QR codes.");
+    const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false,
+    });
+    scanning = { stream, view, button };
+    view.hidden = false;
+    video.srcObject = stream;
+    await video.play();
+    say("Point the camera at a Lightning QR code.");
+    const look = async () => {
+      if (!scanning || scanning.stream !== stream) return;
+      try {
+        const codes = await detector.detect(video);
+        if (codes.length) {
+          const value = lightningText(codes[0].rawValue);
+          if (value) {
+            field.value = value;
+            stopScan();
+            say("Scanned. Check the details, then send.");
+            field.focus();
+            return;
+          }
+          say("That QR code is not a Lightning invoice or address.");
+        }
+      } catch {
+        // The first frames may not be ready yet; keep looking.
+      }
+      setTimeout(look, 250);
+    };
+    look();
+  } catch (error) {
+    stopScan();
+    button.disabled = false;
+    say(
+      error && error.name === "NotAllowedError"
+        ? "Camera access was refused. Allow it in the browser settings, or paste instead."
+        : (error && error.message) || "Could not start the camera.",
+    );
+  }
+}
+
+function stopScan() {
+  if (!scanning) return;
+  const { stream, view, button } = scanning;
+  scanning = null;
+  for (const track of stream.getTracks()) track.stop();
+  const video = view.querySelector("video");
+  if (video) video.srcObject = null;
+  view.hidden = true;
+  button.disabled = false;
 }

@@ -12,14 +12,14 @@ use crate::nostr::tests::signed_event;
 use crate::util::now;
 use crate::web::{self, Shared};
 
-struct Reply {
-    status: StatusCode,
-    location: Option<String>,
-    cookie: Option<String>,
-    body: String,
+pub(super) struct Reply {
+    pub(super) status: StatusCode,
+    pub(super) location: Option<String>,
+    pub(super) cookie: Option<String>,
+    pub(super) body: String,
 }
 
-async fn read(response: Response<Body>) -> Reply {
+pub(super) async fn read(response: Response<Body>) -> Reply {
     let status = response.status();
     let header = |name| {
         response
@@ -38,7 +38,7 @@ async fn read(response: Response<Body>) -> Reply {
     }
 }
 
-async fn get(app: &Shared, uri: &str, cookie: Option<&str>) -> Reply {
+pub(super) async fn get(app: &Shared, uri: &str, cookie: Option<&str>) -> Reply {
     let mut request = Request::get(uri);
     if let Some(cookie) = cookie {
         request = request.header(COOKIE, cookie);
@@ -52,7 +52,7 @@ async fn get(app: &Shared, uri: &str, cookie: Option<&str>) -> Reply {
     .await
 }
 
-async fn post(app: &Shared, uri: &str, cookie: Option<&str>, form: &str, origin: Option<&str>) -> Reply {
+pub(super) async fn post(app: &Shared, uri: &str, cookie: Option<&str>, form: &str, origin: Option<&str>) -> Reply {
     let mut request = Request::post(uri).header(CONTENT_TYPE, "application/x-www-form-urlencoded");
     if let Some(cookie) = cookie {
         request = request.header(COOKIE, cookie);
@@ -79,7 +79,7 @@ async fn post_json(app: &Shared, uri: &str, body: &Value) -> Reply {
 }
 
 /// The value of the first `name="<field>" value="..."` in a page.
-fn field(html: &str, name: &str) -> String {
+pub(super) fn field(html: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\" value=\"");
     let start = html.find(&marker).unwrap_or_else(|| panic!("no {name} field")) + marker.len();
     html[start..].split('"').next().unwrap().to_owned()
@@ -342,7 +342,7 @@ async fn nostr_sign_up_log_in_and_link() {
     assert!(get(&h.app, "/settings", Some(&cookie)).await.body.contains("npub1"));
 }
 
-fn event_json(event: &crate::nostr::Event) -> Value {
+pub(super) fn event_json(event: &crate::nostr::Event) -> Value {
     json!({
         "id": event.id,
         "pubkey": event.pubkey,

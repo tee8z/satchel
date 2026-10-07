@@ -14,7 +14,8 @@ use serde_json::json;
 use crate::util::{random_token, sha256};
 
 pub(crate) const AUTH_KIND: u64 = 27235;
-const MAX_CLOCK_SKEW_SECS: i64 = 120;
+/// How far a signed login or handoff event's time may be from ours.
+pub(crate) const MAX_CLOCK_SKEW_SECS: u64 = 120;
 const CHALLENGE_TTL: Duration = Duration::from_secs(300);
 const MAX_CHALLENGES: usize = 10_000;
 
@@ -62,7 +63,7 @@ pub(crate) fn event_id(event: &Event) -> [u8; 32] {
     sha256(serialized.as_bytes())
 }
 
-fn tag<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
+pub(crate) fn tag<'a>(event: &'a Event, name: &str) -> Option<&'a str> {
     event
         .tags
         .iter()
@@ -78,24 +79,25 @@ fn is_lower_hex(text: &str, len: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Checks a signed login event and uses up its challenge. Returns the signer's
-/// public key (lowercase hex).
-pub(crate) fn verify_login(
+/// Checks a NIP-98 HTTP auth event for `method url`: the kind, a time within
+/// `max_skew_secs` of `now`, the `u` and `method` tags, the id, and the BIP-340
+/// signature. Returns the signer's public key (lowercase hex).
+pub(crate) fn verify_http_auth(
     event: &Event,
     url: &str,
-    challenges: &Challenges,
+    method: &str,
+    max_skew_secs: u64,
     now: i64,
 ) -> Result<String, &'static str> {
     if event.kind != AUTH_KIND {
         return Err("The signed event has the wrong kind.");
     }
-    if (event.created_at - now).abs() > MAX_CLOCK_SKEW_SECS {
+    if event.created_at.abs_diff(now) > max_skew_secs {
         return Err("The signed event's time is too far from now. Check your clock.");
     }
-    if tag(event, "u") != Some(url) || tag(event, "method") != Some("POST") {
+    if tag(event, "u") != Some(url) || tag(event, "method") != Some(method) {
         return Err("The signed event is for another page.");
     }
-    let challenge = tag(event, "challenge").ok_or("The signed event has no challenge.")?;
     if !is_lower_hex(&event.pubkey, 64) || !is_lower_hex(&event.id, 64) || !is_lower_hex(&event.sig, 128) {
         return Err("The signed event is malformed.");
     }
@@ -110,10 +112,23 @@ pub(crate) fn verify_login(
     let pubkey = XOnlyPublicKey::from_byte_array(pubkey).map_err(|_| "The signer's public key is invalid.")?;
     SECP.verify_schnorr(&Signature::from_byte_array(signature), &id, &pubkey)
         .map_err(|_| "The signature is invalid.")?;
+    Ok(event.pubkey.clone())
+}
+
+/// Checks a signed login event and uses up its challenge. Returns the signer's
+/// public key (lowercase hex).
+pub(crate) fn verify_login(
+    event: &Event,
+    url: &str,
+    challenges: &Challenges,
+    now: i64,
+) -> Result<String, &'static str> {
+    let challenge = tag(event, "challenge").ok_or("The signed event has no challenge.")?;
+    let pubkey = verify_http_auth(event, url, "POST", MAX_CLOCK_SKEW_SECS, now)?;
     if !challenges.consume(challenge) {
         return Err("The login challenge expired. Try again.");
     }
-    Ok(event.pubkey.clone())
+    Ok(pubkey)
 }
 
 /// `npub1...` for display.
@@ -134,8 +149,8 @@ pub(crate) mod tests {
 
     pub(crate) const URL: &str = "https://wallet.example.org/auth/nostr";
 
-    /// A signed login event, as a NIP-07 extension would return it.
-    pub(crate) fn signed_event(secret: u8, url: &str, challenge: &str, created_at: i64) -> Event {
+    /// An event signed with the key `[secret; 32]`, as a NIP-07 extension would return it.
+    pub(crate) fn sign(secret: u8, created_at: i64, tags: Vec<Vec<String>>) -> Event {
         let secp = Secp256k1::new();
         let keypair = Keypair::from_secret_key(&secp, &SecretKey::from_byte_array([secret; 32]).unwrap());
         let mut event = Event {
@@ -143,11 +158,7 @@ pub(crate) mod tests {
             pubkey: hex::encode(keypair.x_only_public_key().0.serialize()),
             created_at,
             kind: AUTH_KIND,
-            tags: vec![
-                vec!["u".into(), url.into()],
-                vec!["method".into(), "POST".into()],
-                vec!["challenge".into(), challenge.into()],
-            ],
+            tags,
             content: String::new(),
             sig: String::new(),
         };
@@ -155,6 +166,48 @@ pub(crate) mod tests {
         event.id = hex::encode(id);
         event.sig = hex::encode(secp.sign_schnorr_no_aux_rand(&id, &keypair).to_byte_array());
         event
+    }
+
+    /// A NIP-98 event for `method url`.
+    pub(crate) fn http_auth(secret: u8, url: &str, method: &str, created_at: i64) -> Event {
+        sign(
+            secret,
+            created_at,
+            vec![vec!["u".into(), url.into()], vec!["method".into(), method.into()]],
+        )
+    }
+
+    /// A signed login event.
+    pub(crate) fn signed_event(secret: u8, url: &str, challenge: &str, created_at: i64) -> Event {
+        sign(
+            secret,
+            created_at,
+            vec![
+                vec!["u".into(), url.into()],
+                vec!["method".into(), "POST".into()],
+                vec!["challenge".into(), challenge.into()],
+            ],
+        )
+    }
+
+    #[test]
+    fn checks_http_auth_events_without_a_challenge() {
+        let url = "https://wallet.example.org/api/v1/address";
+        let event = http_auth(5, url, "GET", now());
+        assert_eq!(verify_http_auth(&event, url, "GET", 60, now()).unwrap(), event.pubkey);
+        assert!(verify_http_auth(&event, url, "POST", 60, now()).is_err());
+        assert!(verify_http_auth(&event, "https://wallet.example.org/other", "GET", 60, now()).is_err());
+        assert!(verify_http_auth(&event, url, "GET", 60, now() + 61).is_err());
+        let mut far = http_auth(5, url, "GET", i64::MIN);
+        assert!(verify_http_auth(&far, url, "GET", 60, now()).is_err());
+        far.created_at = i64::MAX;
+        assert!(verify_http_auth(&far, url, "GET", 60, now()).is_err());
+        let mut forged = http_auth(5, url, "GET", now());
+        forged.sig = http_auth(6, url, "GET", now()).sig;
+        assert_eq!(
+            verify_http_auth(&forged, url, "GET", 60, now()),
+            Err("The signature is invalid.")
+        );
     }
 
     #[test]

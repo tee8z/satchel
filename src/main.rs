@@ -6,6 +6,7 @@ mod auth;
 mod config;
 mod db;
 mod error;
+mod handoff;
 mod ledger;
 mod lnd;
 mod lnurl;

@@ -141,21 +141,49 @@ pub(crate) fn landing(ctx: &Ctx<'_>, domain: &str) -> Markup {
     )
 }
 
-fn nostr_button(mode: &str, label: &str, csrf: Option<&str>) -> Markup {
+fn nostr_button(mode: &str, label: &str, csrf: Option<&str>, next: Option<&str>) -> Markup {
     html! {
         div.nostr {
-            button.secondary type="button" data-nostr=(mode) data-csrf=[csrf] { (label) }
+            button.secondary type="button" data-nostr=(mode) data-csrf=[csrf] data-next=[next] { (label) }
             p.nostr-status role="status" {}
         }
     }
 }
 
 pub(crate) fn signup(ctx: &Ctx<'_>, domain: &str, error: Option<&str>, username: &str) -> Markup {
+    signup_with(ctx, domain, error, username, None)
+}
+
+/// Another app handed over a Nostr key no wallet uses yet. The sign-up form
+/// then holds a server-side token for the key instead of a password.
+pub(crate) struct HandoffSignup<'a> {
+    pub(crate) token: &'a str,
+    pub(crate) npub: &'a str,
+}
+
+pub(crate) fn signup_with(
+    ctx: &Ctx<'_>,
+    domain: &str,
+    error: Option<&str>,
+    username: &str,
+    handoff: Option<&HandoffSignup<'_>>,
+) -> Markup {
+    let title = if handoff.is_some() {
+        "Create your wallet"
+    } else {
+        "Create a wallet"
+    };
     layout(
         ctx,
-        "Create a wallet",
+        title,
         html! {
-            h1 { "Create a wallet" }
+            h1 { (title) }
+            @if let Some(handoff) = handoff {
+                p {
+                    "No wallet uses your Nostr key " code { (handoff.npub) } " yet. Choose a username for your "
+                    "Lightning Address; next time the same key signs you in."
+                }
+            }
             @if let Some(error) = error { p.error role="alert" { (error) } }
             form.card method="post" action="/signup" {
                 label for="username" { "Username" }
@@ -164,22 +192,29 @@ pub(crate) fn signup(ctx: &Ctx<'_>, domain: &str, error: Option<&str>, username:
                         autocomplete="username" autocapitalize="none" spellcheck="false";
                     span { "@" (domain) }
                 }
-                label for="password" { "Password (at least 10 characters)" }
-                input #password type="password" name="password" required minlength="10" autocomplete="new-password";
-                label for="confirm" { "Repeat the password" }
-                input #confirm type="password" name="confirm" required minlength="10" autocomplete="new-password";
+                @if let Some(handoff) = handoff {
+                    input type="hidden" name="handoff" value=(handoff.token);
+                } @else {
+                    label for="password" { "Password (at least 10 characters)" }
+                    input #password type="password" name="password" required minlength="10" autocomplete="new-password";
+                    label for="confirm" { "Repeat the password" }
+                    input #confirm type="password" name="confirm" required minlength="10" autocomplete="new-password";
+                }
                 button type="submit" { "Create wallet" }
             }
-            section.card {
-                p { "Or sign up with a Nostr signer extension (NIP-07), using the username above:" }
-                (nostr_button("signup", "Sign up with Nostr", None))
+            @if handoff.is_none() {
+                section.card {
+                    p { "Or sign up with a Nostr signer extension (NIP-07), using the username above:" }
+                    (nostr_button("signup", "Sign up with Nostr", None, None))
+                }
+                p { "Already have a wallet? " a href="/login" { "Log in" } }
             }
-            p { "Already have a wallet? " a href="/login" { "Log in" } }
         },
     )
 }
 
-pub(crate) fn login(ctx: &Ctx<'_>, error: Option<&str>, username: &str) -> Markup {
+/// `next` is the local path to open after logging in.
+pub(crate) fn login(ctx: &Ctx<'_>, error: Option<&str>, username: &str, next: &str) -> Markup {
     layout(
         ctx,
         "Log in",
@@ -187,6 +222,7 @@ pub(crate) fn login(ctx: &Ctx<'_>, error: Option<&str>, username: &str) -> Marku
             h1 { "Log in" }
             @if let Some(error) = error { p.error role="alert" { (error) } }
             form.card method="post" action="/login" {
+                input type="hidden" name="next" value=(next);
                 label for="username" { "Username" }
                 input #username name="username" required value=(username) autocomplete="username"
                     autocapitalize="none" spellcheck="false";
@@ -196,7 +232,7 @@ pub(crate) fn login(ctx: &Ctx<'_>, error: Option<&str>, username: &str) -> Marku
             }
             section.card {
                 p { "Linked a Nostr key? Log in with your signer extension:" }
-                (nostr_button("login", "Log in with Nostr", None))
+                (nostr_button("login", "Log in with Nostr", None, Some(next)))
             }
             p { "New here? " a href="/signup" { "Create a wallet" } }
         },
@@ -328,6 +364,8 @@ pub(crate) struct SendValues<'a> {
     pub(crate) destination: &'a str,
     pub(crate) amount: &'a str,
     pub(crate) comment: &'a str,
+    /// What a deep link points at; the button then reads Pay.
+    pub(crate) details: Option<Markup>,
 }
 
 pub(crate) fn send_section(
@@ -339,6 +377,7 @@ pub(crate) fn send_section(
     html! {
         section.card #send {
             h2 { "Send" }
+            @if let Some(details) = &values.details { (details) }
             form method="post" action="/wallet/send" hx-post="/wallet/send" hx-target="#send" hx-swap="outerHTML"
                 hx-disable="find button" {
                 input type="hidden" name="csrf" value=(csrf);
@@ -347,11 +386,12 @@ pub(crate) fn send_section(
                 textarea #send-to name="destination" rows="3" required autocapitalize="none" spellcheck="false" {
                     (values.destination)
                 }
+                (scanner("send-to"))
                 label for="send-amount" { "Amount (sats; for addresses and invoices without an amount)" }
                 input #send-amount name="amount_sat" inputmode="numeric" value=(values.amount);
                 label for="send-comment" { "Comment for an address (optional)" }
                 input #send-comment name="comment" maxlength="140" value=(values.comment);
-                button type="submit" { "Send" }
+                button type="submit" { @if values.details.is_some() { "Pay" } @else { "Send" } }
                 p.muted { "A routing-fee budget is held while a payment is in flight; the unused part comes back." }
             }
             @match result {
@@ -359,6 +399,21 @@ pub(crate) fn send_section(
                 Some(Err(message)) => { p.error role="alert" { (message) } }
                 None => {}
             }
+        }
+    }
+}
+
+/// A camera QR scanner that fills the field `target`. It stays hidden unless
+/// app.js finds `BarcodeDetector` and a camera.
+fn scanner(target: &str) -> Markup {
+    html! {
+        div.scan hidden data-scanner {
+            button.secondary type="button" data-scan=(target) { "Scan a QR code" }
+            div hidden data-scan-view {
+                video.qr playsinline muted aria-label="Camera preview" {}
+                button.secondary type="button" data-scan-stop { "Stop scanning" }
+            }
+            p.muted.scan-status role="status" hidden {}
         }
     }
 }
@@ -502,7 +557,7 @@ pub(crate) fn settings(ctx: &Ctx<'_>, page: &SettingsPage<'_>) -> Markup {
                     }
                 } @else {
                     p { "Link a Nostr key to log in with a NIP-07 signer extension." }
-                    (nostr_button("link", "Link Nostr signer", Some(page.csrf)))
+                    (nostr_button("link", "Link Nostr signer", Some(page.csrf), None))
                 }
             }
             section.card {
