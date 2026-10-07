@@ -112,12 +112,18 @@ function powSolver(marker) {
   }
 
   if (form) {
+    const button = form.querySelector('button[type="submit"]');
+    const status = form.querySelector(".pow-status");
+    const label = button ? button.textContent : "";
+    const reset = () => {
+      if (button) {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    };
     form.addEventListener("submit", async (event) => {
       if (fresh()) return;
       event.preventDefault();
-      const button = form.querySelector('button[type="submit"]');
-      const status = form.querySelector(".pow-status");
-      const label = button ? button.textContent : "";
       if (button) {
         button.disabled = true;
         button.textContent = "Preparing…";
@@ -127,11 +133,14 @@ function powSolver(marker) {
         form.submit();
       } catch (error) {
         if (status) status.textContent = error && error.message ? error.message : "The sign-up check failed.";
-        if (button) {
-          button.disabled = false;
-          button.textContent = label;
-        }
+        reset();
       }
+    });
+    // Back from another page: the solution may be spent already.
+    window.addEventListener("pageshow", (event) => {
+      if (!event.persisted) return;
+      reset();
+      start();
     });
   }
 
