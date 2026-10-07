@@ -541,6 +541,8 @@ pub(super) struct SendForm {
     amount_sat: String,
     #[serde(default)]
     comment: String,
+    #[serde(default)]
+    max_fee_msat: Option<u64>,
 }
 
 impl SendForm {
@@ -580,6 +582,7 @@ pub(super) async fn review_send(
                     destination: form.destination.clone(),
                     amount_msat: msat_from_sats(amount),
                     comment: form.comment.clone(),
+                    max_fee_msat: None,
                 },
             )
             .await
@@ -644,6 +647,7 @@ pub(super) async fn send(
             destination: form.destination.clone(),
             amount_msat: msat_from_sats(amount),
             comment: form.comment.clone(),
+            max_fee_msat: form.max_fee_msat,
         };
         app.wallet.pay(&session.account, request).await
     };

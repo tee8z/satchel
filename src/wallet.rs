@@ -55,6 +55,8 @@ pub(crate) struct PayRequest {
     pub(crate) destination: String,
     pub(crate) amount_msat: Option<u64>,
     pub(crate) comment: String,
+    /// Fee allowance the user reviewed; sending can only lower this limit.
+    pub(crate) max_fee_msat: Option<u64>,
 }
 
 /// A read-only check before the user authorizes a payment. Sending checks again.
@@ -74,6 +76,7 @@ struct Outgoing {
     amount_override: Option<u64>,
     counterparty: String,
     memo: String,
+    max_fee_msat: Option<u64>,
 }
 
 pub(crate) struct Wallet {
@@ -386,7 +389,7 @@ impl Wallet {
         let destination = lnurl::parse_destination(&request.destination)?;
         if let Destination::Invoice(bolt11) = &destination {
             return self
-                .pay_invoice(account, &key, bolt11.clone(), request.amount_msat)
+                .pay_invoice(account, &key, bolt11.clone(), request.amount_msat, request.max_fee_msat)
                 .await;
         }
         let url = destination
@@ -430,6 +433,7 @@ impl Wallet {
             amount_override: None,
             counterparty,
             memo: comment,
+            max_fee_msat: request.max_fee_msat,
         };
         self.pay_outgoing(account, &key, outgoing).await
     }
@@ -485,6 +489,7 @@ impl Wallet {
         key: &str,
         bolt11: String,
         amount_msat: Option<u64>,
+        max_fee_msat: Option<u64>,
     ) -> Result<Payment, WalletError> {
         let decoded = self.decode(&bolt11).await?;
         let (amount, amount_override) = if decoded.num_msat == 0 {
@@ -503,6 +508,7 @@ impl Wallet {
             amount_override,
             counterparty,
             memo,
+            max_fee_msat,
         };
         self.pay_outgoing(account, key, outgoing).await
     }
@@ -517,7 +523,9 @@ impl Wallet {
         if let Some(invoice) = self.db.invoice(&outgoing.decoded.payment_hash).await? {
             return self.pay_own_invoice(account, key, invoice).await;
         }
-        let fee_limit = self.fee_limit_msat(outgoing.amount_msat);
+        let fee_limit = self
+            .fee_limit_msat(outgoing.amount_msat)
+            .min(outgoing.max_fee_msat.unwrap_or(u64::MAX));
         let send = NewSend {
             account_id: account.id,
             request_key: key,

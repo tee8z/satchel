@@ -473,7 +473,10 @@ pub(crate) fn send_review(
                 dt { "Maximum fee" } dd { (sats(preview.fee_limit_msat)) " sats" }
                 dt { "Maximum total" } dd.total { (sats(preview.amount_msat.saturating_add(preview.fee_limit_msat))) " sats" }
             }
-            p.muted { "The final fee may be lower. Any unused fee allowance stays in your balance." }
+            p.muted {
+                @if preview.fee_limit_msat == 0 { "No routing fee will be charged." }
+                @else { "The final fee may be lower. Any unused fee allowance stays in your balance." }
+            }
             @for (action, label, secondary) in [("/wallet/send", "Confirm and send", false), ("/wallet/send/edit", "Edit payment", true)] {
                 form method="post" action=(action) hx-post=(action) hx-target="#send" hx-swap="outerHTML" hx-disable="find button" {
                     input type="hidden" name="csrf" value=(csrf);
@@ -481,6 +484,7 @@ pub(crate) fn send_review(
                     input type="hidden" name="destination" value=(values.destination);
                     input type="hidden" name="amount_sat" value=(values.amount);
                     input type="hidden" name="comment" value=(values.comment);
+                    input type="hidden" name="max_fee_msat" value=(preview.fee_limit_msat);
                     button.secondary[secondary] type="submit" { (label) }
                 }
             }

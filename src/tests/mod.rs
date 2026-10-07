@@ -131,6 +131,7 @@ impl Harness {
             destination: destination.to_owned(),
             amount_msat: amount_sat.map(|sats| sats * 1000),
             comment: String::new(),
+            max_fee_msat: None,
         }
     }
 

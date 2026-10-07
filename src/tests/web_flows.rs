@@ -193,9 +193,15 @@ async fn review_does_not_pay_and_edit_preserves_input() {
     assert!(edit.body.contains("value=\"hello\""));
     assert!(!edit.body.contains("Confirm and send"));
     assert!(h.lnd.lock().sends.is_empty());
+    let form = format!("{form}&max_fee_msat=5000");
     let sent = post(&h.app, "/wallet/send", Some(&cookie), &form, Some(SITE)).await;
     assert!(sent.body.contains("Sent 1,000 sats"));
     assert_eq!(h.sats(&account).await, 1000);
+    assert_eq!(
+        h.lnd.lock().sends[0].fee_limit_msat,
+        5000,
+        "confirmation cannot raise the reviewed fee allowance"
+    );
     post(&h.app, "/wallet/send", Some(&cookie), &form, Some(SITE)).await;
     assert_eq!(h.lnd.lock().sends.len(), 1, "confirm retry cannot pay twice");
     let bad = form.replace(&csrf, "invalid");
