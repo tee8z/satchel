@@ -61,6 +61,11 @@ html {
   text-size-adjust: 100%;
 }
 
+/* Elements styled with a display value below must still hide. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -441,13 +446,19 @@ details summary {
   background: #ffffff;
 }
 
-video {
+/* The camera preview of the QR scanner on the Send form. */
+video,
+video.qr {
   display: block;
   width: 100%;
   max-width: 22rem;
   margin: 0.75rem auto;
   border-radius: var(--radius);
   background: #000000;
+}
+
+.scan button {
+  margin-top: 0.5rem;
 }
 
 progress {
