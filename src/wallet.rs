@@ -586,14 +586,16 @@ impl Wallet {
                 )
                 .await;
             }
-            Ok(PaymentStatus::Failed { reason }) => self.finish_send(id, SendOutcome::Failed { reason }).await,
+            Ok(PaymentStatus::Failed { reason }) => {
+                self.finish_send(id, SendOutcome::Failed { reason }).await;
+            }
             Ok(status) => warn!(id, ?status, "payment outcome unknown; reconciliation will settle it"),
             Err(error) => warn!(id, %error, "payment outcome unknown; reconciliation will settle it"),
         }
         self.set_in_flight(id, false);
     }
 
-    async fn finish_send(&self, id: i64, outcome: SendOutcome) {
+    async fn finish_send(&self, id: i64, outcome: SendOutcome) -> bool {
         match self.db.finish_send(id, &outcome).await {
             Ok(true) => {
                 let counter = match outcome {
@@ -602,9 +604,13 @@ impl Wallet {
                 };
                 inc(counter);
                 info!(id, ?outcome, "payment finished");
+                true
             }
-            Ok(false) => {}
-            Err(error) => error!(id, %error, "cannot record payment outcome"),
+            Ok(false) => true,
+            Err(error) => {
+                error!(id, %error, "cannot record payment outcome");
+                false
+            }
         }
     }
 
@@ -804,6 +810,8 @@ impl Wallet {
                 Err(error) => warn!(%error, "LND invoice stream failed; reconnecting"),
             }
             self.metrics.invoice_stream_up.store(false, Ordering::Relaxed);
+            self.metrics.invoice_stream_connecting.store(false, Ordering::Relaxed);
+            inc(&self.metrics.invoice_stream_reconnects);
             if started.elapsed() > Duration::from_secs(60) {
                 backoff = Duration::from_secs(1);
             }
@@ -814,7 +822,9 @@ impl Wallet {
 
     async fn follow_invoices_once(&self) -> anyhow::Result<()> {
         let cursor = u64::try_from(self.db.cursor(SETTLE_CURSOR).await?).unwrap_or(0);
+        self.metrics.invoice_stream_connecting.store(true, Ordering::Relaxed);
         let mut stream = self.lnd.subscribe_invoices(cursor).await?;
+        self.metrics.invoice_stream_connecting.store(false, Ordering::Relaxed);
         self.metrics.invoice_stream_up.store(true, Ordering::Relaxed);
         info!(settle_index = cursor, "following LND invoices");
         while let Some(invoice) = stream.next().await? {
@@ -839,8 +849,12 @@ impl Wallet {
     /// Brings the ledger in line with LND: credits invoices paid while the
     /// stream was down, and settles payments whose outcome was not recorded.
     pub(crate) async fn reconcile(&self) {
-        self.reconcile_invoices().await;
-        self.reconcile_sends(now() - RECONCILE_GRACE_SECS).await;
+        self.metrics
+            .reconciliation_last_attempt
+            .store(now() as u64, Ordering::Relaxed);
+        let invoices_ok = self.reconcile_invoices().await;
+        let sends_ok = self.reconcile_sends(now() - RECONCILE_GRACE_SECS).await;
+        let mut success = invoices_ok && sends_ok;
         match self.lnd.balances().await {
             Ok(balances) => {
                 self.metrics
@@ -852,43 +866,68 @@ impl Wallet {
             Err(error) => {
                 self.metrics.node_balance_known.store(false, Ordering::Relaxed);
                 warn!(%error, "cannot read node balance");
+                success = false;
             }
+        }
+        if success {
+            self.metrics
+                .reconciliation_last_success
+                .store(now() as u64, Ordering::Relaxed);
+        } else {
+            inc(&self.metrics.reconciliation_failures);
         }
     }
 
-    async fn reconcile_invoices(&self) {
+    async fn reconcile_invoices(&self) -> bool {
         let open = match self.db.open_invoices(500).await {
             Ok(open) => open,
-            Err(error) => return error!(%error, "cannot list open invoices"),
+            Err(error) => {
+                error!(%error, "cannot list open invoices");
+                return false;
+            }
         };
+        let mut success = true;
         for invoice in open {
             match self.lnd.lookup_invoice(invoice.payment_hash.clone()).await {
                 Ok(Some(lnd)) if lnd.is_settled() => {
                     if let Err(error) = self.credit_settled(&lnd).await {
                         error!(%error, "cannot credit a settled invoice");
+                        success = false;
                     }
                 }
-                Ok(Some(lnd)) if lnd.is_canceled() => self.mark_canceled(&invoice.payment_hash).await,
+                Ok(Some(lnd)) if lnd.is_canceled() => success &= self.mark_canceled(&invoice.payment_hash).await,
                 // LND no longer knows it (a reset node) and it has expired: it cannot be paid.
-                Ok(None) if invoice.expires_at < now() - 3600 => self.mark_canceled(&invoice.payment_hash).await,
+                Ok(None) if invoice.expires_at < now() - 3600 => {
+                    success &= self.mark_canceled(&invoice.payment_hash).await
+                }
                 Ok(_) => {}
-                Err(error) => return warn!(%error, "cannot look up invoices; will retry"),
+                Err(error) => {
+                    warn!(%error, "cannot look up invoices; will retry");
+                    return false;
+                }
             }
         }
+        success
     }
 
-    async fn mark_canceled(&self, payment_hash: &str) {
+    async fn mark_canceled(&self, payment_hash: &str) -> bool {
         if let Err(error) = self.db.mark_invoice_canceled(payment_hash).await {
             error!(%error, "cannot mark invoice canceled");
+            return false;
         }
+        true
     }
 
     /// Settles pending sends created before `created_before` that no live task is driving.
-    pub(crate) async fn reconcile_sends(&self, created_before: i64) {
+    pub(crate) async fn reconcile_sends(&self, created_before: i64) -> bool {
         let pending = match self.db.pending_sends(created_before).await {
             Ok(pending) => pending,
-            Err(error) => return error!(%error, "cannot list pending payments"),
+            Err(error) => {
+                error!(%error, "cannot list pending payments");
+                return false;
+            }
         };
+        let mut success = true;
         for send in pending {
             if self.is_in_flight(send.id) {
                 continue;
@@ -904,10 +943,12 @@ impl Wallet {
                 Ok(PaymentStatus::InFlight) => continue,
                 Err(error) => {
                     warn!(id = send.id, %error, "cannot track payment; will retry");
+                    success = false;
                     continue;
                 }
             };
-            self.finish_send(send.id, outcome).await;
+            success &= self.finish_send(send.id, outcome).await;
         }
+        success
     }
 }

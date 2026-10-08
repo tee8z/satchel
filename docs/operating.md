@@ -385,10 +385,19 @@ migrated database.
 ## Health and metrics
 
 `/healthz` answers `200` with
-`{"status":"ok","database":true,"invoice_stream":true}` while the database
-responds, and `503` when it does not. Whether the LND invoice stream is
-connected is reported but does not fail the check, so a restarting LND does
-not take Satchel out of a load balancer.
+database status, `invoice_stream`, `invoice_stream_state`, and `reconciliation_last_success`.
+It answers `503` when the database does not respond. Stream status does not change the HTTP status.
+
+`invoice_stream_state` is `connected`, `awaiting_response`, or `disconnected`.
+LND's REST proxy can wait for the first invoice before sending response headers.
+An idle `awaiting_response` subscription alone does not prove an outage.
+
+Reconciliation checks invoices, pending payments, and node balances every minute.
+`reconciliation_last_success` is its last complete successful pass, in Unix seconds, or zero before success.
+A failed lookup or ledger write leaves the previous success time unchanged.
+
+Allow long idle connections through any LND proxy, while retaining connection and TLS handshake limits.
+For example, a 24-hour idle timeout avoids reconnecting every ten minutes during quiet periods.
 
 `/metrics` is Prometheus text. It is served only on `server.metrics_address`
 (together with a second `/healthz`); keep that listener private.
@@ -421,7 +430,12 @@ Every metric is a total; none has a per-account label.
 | `satchel_pow_checks_total{outcome}` | counter | Proof-of-work solutions checked, `verified` or `rejected`. |
 | `satchel_pow_difficulty_bits` | gauge | Leading zero bits a new account needs now. |
 | `satchel_faucet_paid_msat_total` | counter | Faucet sats paid since start, in msat. |
-| `satchel_invoice_stream_up` | gauge | `1` while the LND invoice subscription is connected. |
+| `satchel_invoice_stream_up` | gauge | `1` after LND accepts the invoice subscription. |
+| `satchel_invoice_stream_connecting` | gauge | `1` while waiting for LND's subscription response. |
+| `satchel_invoice_stream_reconnects_total` | counter | Subscription failures or endings followed by a reconnect. |
+| `satchel_reconciliation_last_attempt_timestamp_seconds` | gauge | Last reconciliation start, in Unix seconds. |
+| `satchel_reconciliation_last_success_timestamp_seconds` | gauge | Last complete successful reconciliation, in Unix seconds. |
+| `satchel_reconciliation_failures_total` | counter | Reconciliation passes with at least one failure. |
 
 Counters start at zero when the process starts. What the abuse-related
 metrics mean in practice: [abuse-protection.md](abuse-protection.md#metrics).
@@ -439,10 +453,12 @@ groups:
         # Users hold more than the node can pay out.
         expr: satchel_liabilities_msat > satchel_node_channel_local_msat
         for: 15m
-      - alert: SatchelInvoiceStreamDown
-        # Payments are still credited by the once-a-minute reconciliation, but late.
-        expr: satchel_invoice_stream_up == 0
-        for: 10m
+      - alert: SatchelReconciliationStale
+        expr: up{job="satchel"} == 1 unless on(instance,job) (time() - satchel_reconciliation_last_success_timestamp_seconds < 180)
+        for: 5m
+      - alert: SatchelInvoiceStreamReconnecting
+        expr: increase(satchel_invoice_stream_reconnects_total[30m]) > 2
+        for: 5m
       - alert: SatchelPaymentsStuck
         expr: satchel_pending_payments > 0
         for: 30m
