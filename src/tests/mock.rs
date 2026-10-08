@@ -36,6 +36,8 @@ pub(crate) struct MockState {
     pub(crate) sends: Vec<SendRequest>,
     pub(crate) canceled: Vec<String>,
     pub(crate) channel_local_msat: u64,
+    pub(crate) fail_lookup: bool,
+    pub(crate) fail_balances: bool,
     counter: u64,
     settle_index: u64,
     stream: Option<mpsc::UnboundedReceiver<LndInvoice>>,
@@ -64,6 +66,8 @@ impl MockLnd {
                 sends: Vec::new(),
                 canceled: Vec::new(),
                 channel_local_msat: 1_000_000_000_000,
+                fail_lookup: false,
+                fail_balances: false,
                 counter: 0,
                 settle_index: 0,
                 stream: Some(receiver),
@@ -158,6 +162,9 @@ impl Lightning for MockLnd {
     }
 
     fn lookup_invoice(&self, payment_hash: String) -> BoxFuture<'_, Option<LndInvoice>> {
+        if self.lock().fail_lookup {
+            return Box::pin(async { Err(anyhow!("node unavailable")) });
+        }
         let found = self.lock().invoices.get(&payment_hash).map(|invoice| LndInvoice {
             r_hash: STANDARD.encode(hex::decode(payment_hash.as_str()).unwrap()),
             state: invoice.state.into(),
@@ -230,6 +237,9 @@ impl Lightning for MockLnd {
     }
 
     fn balances(&self) -> BoxFuture<'_, NodeBalances> {
+        if self.lock().fail_balances {
+            return Box::pin(async { Err(anyhow!("balance unavailable")) });
+        }
         let channel_local_msat = self.lock().channel_local_msat;
         Box::pin(async move {
             Ok(NodeBalances {

@@ -7,6 +7,12 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-08
+
+- Distinguish idle invoice subscriptions awaiting a response from disconnected streams.
+- Report reconnection counts and reconciliation freshness, including partial failures.
+- Document alerts that detect failed reconciliation without alarming on quiet invoice streams.
+
 ## [0.3.0] - 2026-10-07
 
 - Open to a compact wallet overview with recent activity and clear Send and Receive actions.
@@ -100,7 +106,8 @@ Lightning wallet and Lightning Address server for test networks only.
 - Documentation for operating, configuration, Docker, integrating, and
   abuse protection under `docs/`.
 
-[Unreleased]: https://github.com/tee8z/satchel/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tee8z/satchel/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/tee8z/satchel/compare/v0.3.0...v0.3.1
 [0.1.0]: https://github.com/tee8z/satchel/releases/tag/v0.1.0
 
 [0.2.0]: https://github.com/tee8z/satchel/compare/v0.1.0...v0.2.0

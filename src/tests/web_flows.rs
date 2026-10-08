@@ -378,6 +378,8 @@ async fn healthz_reports_the_database_and_invoice_stream() {
     assert_eq!(body["status"], "ok");
     assert_eq!(body["database"], true);
     assert_eq!(body["invoice_stream"], false);
+    assert_eq!(body["invoice_stream_state"], "disconnected");
+    assert_eq!(body["reconciliation_last_success"], 0);
 }
 
 #[tokio::test]

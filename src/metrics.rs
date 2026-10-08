@@ -26,6 +26,11 @@ pub(crate) struct Metrics {
     pub(crate) pow_difficulty: AtomicU64,
     pub(crate) faucet_paid_msat: AtomicU64,
     pub(crate) invoice_stream_up: AtomicBool,
+    pub(crate) invoice_stream_connecting: AtomicBool,
+    pub(crate) invoice_stream_reconnects: AtomicU64,
+    pub(crate) reconciliation_last_attempt: AtomicU64,
+    pub(crate) reconciliation_last_success: AtomicU64,
+    pub(crate) reconciliation_failures: AtomicU64,
     /// Updated by the reconciler each minute.
     pub(crate) node_channel_local_msat: AtomicU64,
     pub(crate) node_balance_known: AtomicBool,
@@ -36,6 +41,17 @@ pub(crate) fn inc(counter: &AtomicU64) {
 }
 
 impl Metrics {
+    pub(crate) fn invoice_stream_state(&self) -> &'static str {
+        if self.invoice_stream_up.load(Ordering::Relaxed) {
+            "connected"
+        } else if self.invoice_stream_connecting.load(Ordering::Relaxed) {
+            // LND's REST proxy can wait for an invoice before sending headers.
+            "awaiting_response"
+        } else {
+            "disconnected"
+        }
+    }
+
     pub(crate) fn rate_limited(&self, scope: &str) {
         let mut counts = self.rate_limited.lock().expect("metrics lock is not poisoned");
         *counts.entry(scope.to_owned()).or_default() += 1;
@@ -190,6 +206,41 @@ impl Metrics {
             "gauge",
             "Whether the LND invoice subscription is connected.",
             &[("", f64::from(u8::from(self.invoice_stream_up.load(Ordering::Relaxed))))],
+        );
+        metric(
+            "satchel_invoice_stream_connecting",
+            "gauge",
+            "Subscription awaiting HTTP response headers; an idle LND may not send them yet.",
+            &[(
+                "",
+                f64::from(u8::from(self.invoice_stream_connecting.load(Ordering::Relaxed))),
+            )],
+        );
+        for (name, help, value) in [
+            (
+                "satchel_reconciliation_last_attempt_timestamp_seconds",
+                "Last reconciliation start, or zero before the first attempt.",
+                load(&self.reconciliation_last_attempt),
+            ),
+            (
+                "satchel_reconciliation_last_success_timestamp_seconds",
+                "Last reconciliation that checked invoices, pending sends and node balance successfully.",
+                load(&self.reconciliation_last_success),
+            ),
+        ] {
+            metric(name, "gauge", help, &[("", value as f64)]);
+        }
+        metric(
+            "satchel_reconciliation_failures_total",
+            "counter",
+            "Reconciliation passes with at least one failed check or ledger update.",
+            &[("", load(&self.reconciliation_failures) as f64)],
+        );
+        metric(
+            "satchel_invoice_stream_reconnects_total",
+            "counter",
+            "Invoice subscriptions that ended or failed and will be retried.",
+            &[("", load(&self.invoice_stream_reconnects) as f64)],
         );
         out
     }

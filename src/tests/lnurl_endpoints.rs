@@ -164,3 +164,32 @@ async fn the_invoice_stream_credits_payments_and_advances_its_cursor() {
     h.wallet.reconcile().await;
     assert_eq!(h.sats(&alice).await, 6_000);
 }
+
+#[tokio::test]
+async fn reconciliation_health_requires_a_complete_pass_and_credits_without_a_stream() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let h = harness().await;
+    let alice = h.account("alice").await;
+    let invoice = h.wallet.create_invoice(&alice, 1_000_000, "", false).await.unwrap();
+    h.lnd.pay(&invoice.payment_hash);
+    h.lnd.lock().fail_lookup = true;
+    h.wallet.reconcile().await;
+    assert_eq!(h.wallet.metrics.reconciliation_last_success.load(Relaxed), 0);
+    assert_eq!(h.wallet.metrics.reconciliation_failures.load(Relaxed), 1);
+    assert!(h.wallet.metrics.reconciliation_last_attempt.load(Relaxed) > 0);
+    assert_eq!(h.sats(&alice).await, 0);
+
+    h.lnd.lock().fail_lookup = false;
+    h.wallet.reconcile().await;
+    h.wallet.reconcile().await;
+    assert_eq!(h.sats(&alice).await, 1_000);
+    assert_eq!(h.wallet.metrics.invoice_stream_state(), "disconnected");
+    let success = h.wallet.metrics.reconciliation_last_success.load(Relaxed);
+    assert!(success > 0);
+
+    h.lnd.lock().fail_balances = true;
+    h.wallet.reconcile().await;
+    assert_eq!(h.wallet.metrics.reconciliation_last_success.load(Relaxed), success);
+    assert_eq!(h.wallet.metrics.reconciliation_failures.load(Relaxed), 2);
+    assert_eq!(h.sats(&alice).await, 1_000);
+}

@@ -251,6 +251,8 @@ async fn healthz(State(app): State<Shared>) -> Response {
         "status": state,
         "database": database,
         "invoice_stream": invoice_stream,
+        "invoice_stream_state": app.wallet.metrics.invoice_stream_state(),
+        "reconciliation_last_success": app.wallet.metrics.reconciliation_last_success.load(Ordering::Relaxed),
     });
     (status, Json(body)).into_response()
 }
