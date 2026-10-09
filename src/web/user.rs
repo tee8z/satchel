@@ -129,7 +129,7 @@ pub(super) async fn signup(
                 return Ok(retry(message));
             }
             let Ok(permit) = app.passwords.admit() else {
-                return Ok(busy(&retry));
+                return Ok(busy(retry));
             };
             Some(permit)
         }
@@ -238,7 +238,7 @@ pub(super) async fn login(
     let retry = |message: &str| pages::login(&ctx, Some(message), &form.username, &next).into_response();
     let username = form.username.trim().to_ascii_lowercase();
     let Ok(permit) = app.passwords.admit() else {
-        return Ok(busy(&retry));
+        return Ok(busy(retry));
     };
     if !app.allow("login-ip", &ip.key(), app.rate.login_per_ip_per_minute, MINUTE)
         || !app.allow("login-account", &username, app.rate.login_per_account_per_hour, HOUR)
