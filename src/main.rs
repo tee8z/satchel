@@ -14,6 +14,7 @@ mod lnd;
 mod lnurl;
 mod metrics;
 mod nostr;
+mod password_work;
 mod pow;
 mod qr;
 mod ratelimit;

@@ -143,9 +143,10 @@ pub(super) async fn signup(
         Some(pending) => (None, Some(pending.nostr_pubkey.as_str())),
         None => {
             let password = form.password.clone();
-            let hash = tokio::task::spawn_blocking(move || auth::hash_password(&password))
-                .await
-                .map_err(|_| Reject::Server)?
+            let hash = app
+                .passwords
+                .run(move || auth::hash_password(&password))
+                .await?
                 .map_err(|_| Reject::Server)?;
             (Some(hash), None)
         }
@@ -232,14 +233,16 @@ pub(super) async fn login(
     }
     let account = app.wallet.db.account_by_username(&username).await?;
     // Unknown names check a dummy hash, so both failures take as long.
-    let hash = account
-        .as_ref()
-        .and_then(|account| account.password_hash.clone())
-        .unwrap_or_else(|| auth::DUMMY_HASH.clone());
+    let hash = account.as_ref().and_then(|account| account.password_hash.clone());
     let password = form.password.clone();
-    let verified = tokio::task::spawn_blocking(move || auth::verify_password(&hash, &password))
-        .await
-        .unwrap_or(false);
+    let verified = app
+        .passwords
+        .run(move || {
+            // Lazy dummy-hash initialization also stays inside the worker budget.
+            let hash = hash.unwrap_or_else(|| auth::DUMMY_HASH.clone());
+            auth::verify_password(&hash, &password)
+        })
+        .await?;
     let Some(account) = account.filter(|account| verified && account.password_hash.is_some()) else {
         inc(&app.wallet.metrics.login_failures);
         return Ok(retry("Wrong username or password."));
@@ -856,9 +859,10 @@ pub(super) async fn change_password(
     }
     if let Some(hash) = session.account.password_hash.clone() {
         let current = form.current.clone();
-        let verified = tokio::task::spawn_blocking(move || auth::verify_password(&hash, &current))
-            .await
-            .unwrap_or(false);
+        let verified = app
+            .passwords
+            .run(move || auth::verify_password(&hash, &current))
+            .await?;
         if !verified {
             return Ok(refuse(&session, "The current password is wrong."));
         }
@@ -867,9 +871,10 @@ pub(super) async fn change_password(
         return Ok(refuse(&session, message));
     }
     let new = form.new.clone();
-    let hash = tokio::task::spawn_blocking(move || auth::hash_password(&new))
-        .await
-        .map_err(|_| Reject::Server)?
+    let hash = app
+        .passwords
+        .run(move || auth::hash_password(&new))
+        .await?
         .map_err(|_| Reject::Server)?;
     app.wallet.db.set_password(session.account.id, &hash).await?;
     app.wallet

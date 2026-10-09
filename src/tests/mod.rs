@@ -7,6 +7,7 @@ mod invoice_flows;
 mod ledger;
 mod lnurl_endpoints;
 mod mock;
+mod password_work;
 mod protections;
 mod web_flows;
 

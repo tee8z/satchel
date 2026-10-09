@@ -42,6 +42,7 @@ use crate::blocklist::Blocklist;
 use crate::config::{Config, RateLimits, public_origin};
 use crate::db::Account;
 use crate::nostr::Challenges;
+use crate::password_work::{PasswordWork, WorkError};
 use crate::pow::Pow;
 use crate::ratelimit::{RateLimiter, client_key};
 use crate::util::constant_time_eq;
@@ -57,6 +58,7 @@ const OPERATOR_SESSION_SECS: i64 = 12 * 3600;
 pub(crate) struct App {
     pub(crate) wallet: Arc<Wallet>,
     pub(crate) limiter: RateLimiter,
+    pub(crate) passwords: PasswordWork,
     pub(crate) rate: RateLimits,
     pub(crate) challenges: Challenges,
     /// Proof of work for new accounts.
@@ -104,6 +106,7 @@ impl App {
             secure_cookies: wallet.origin.scheme() == "https",
             wallet,
             limiter: RateLimiter::default(),
+            passwords: PasswordWork::default(),
             rate: config.rate_limits.clone(),
             challenges: Challenges::default(),
             pow: Pow::new(&config.pow),
@@ -262,7 +265,7 @@ async fn metrics(State(app): State<Shared>) -> Response {
     match app.wallet.db.totals().await {
         Ok(totals) => (
             [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
-            app.wallet.metrics.render(&totals),
+            format!("{}{}", app.wallet.metrics.render(&totals), app.passwords.metrics()),
         )
             .into_response(),
         Err(error) => {
@@ -355,6 +358,7 @@ pub(crate) enum Reject {
     Operator,
     Forbidden,
     NotFound,
+    Busy,
     Server,
 }
 
@@ -374,8 +378,23 @@ impl IntoResponse for Reject {
                 "This form expired. Reload the page and try again.",
             )
                 .into_response(),
+            Self::Busy => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "1")],
+                "Password service is busy. Please try again shortly.",
+            )
+                .into_response(),
             Self::NotFound => (StatusCode::NOT_FOUND, "Not found.").into_response(),
             Self::Server => (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong. Try again.").into_response(),
+        }
+    }
+}
+
+impl From<WorkError> for Reject {
+    fn from(error: WorkError) -> Self {
+        match error {
+            WorkError::Busy => Self::Busy,
+            WorkError::Failed => Self::Server,
         }
     }
 }
