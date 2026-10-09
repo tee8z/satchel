@@ -158,3 +158,14 @@ requestTimeoutSecs, paymentTimeoutSecs}`. The `limits`, `faucet`,
 the key names above. The database is always
 `/var/lib/satchel/wallet.db`, and credential files are passed with systemd
 `LoadCredential`.
+
+### Password worker budget
+
+All HTTP password hashing and verification share two blocking workers, with no waiting queue.
+This includes user login, operator login, signup, password changes, and dummy checks for unknown usernames.
+When both workers are occupied, requests receive HTTP 503 with `Retry-After: 1`.
+A disconnected request keeps its worker occupied until the password operation finishes.
+The fixed limit bounds ordinary Argon2 working memory to about 38 MiB; it does not cap total process memory.
+
+Monitor `satchel_password_jobs` and `satchel_password_jobs_rejected_total` alongside service memory and request latency.
+Per-IP and per-account rate limits still apply.

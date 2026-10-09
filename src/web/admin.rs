@@ -42,9 +42,10 @@ pub(super) async fn login(
         return Ok(pages::admin_login(&ctx, Some("Too many attempts. Wait a minute.")).into_response());
     }
     let password = form.password.clone();
-    let verified = tokio::task::spawn_blocking(move || auth::verify_password(&hash, &password))
-        .await
-        .unwrap_or(false);
+    let verified = app
+        .passwords
+        .run(move || auth::verify_password(&hash, &password))
+        .await?;
     if !verified {
         inc(&app.wallet.metrics.login_failures);
         tracing::warn!(client = %ip.key(), "operator login failed");

@@ -7,6 +7,12 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-09
+
+- Limit all HTTP password checks and hashing to two workers. Excess requests receive HTTP 503 with `Retry-After`.
+- Keep worker capacity occupied after a request disconnects until its password work finishes.
+- Report admitted and refused password jobs in Prometheus metrics.
+
 ## [0.3.2] - 2026-10-09
 
 - Open payment handoffs in the current wallet, or keep the invoice through login and signup.
