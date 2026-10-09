@@ -7,6 +7,12 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-09
+
+- Open payment handoffs in the current wallet, or keep the invoice through login and signup.
+- Fill and lock fixed invoice amounts when opening, pasting, scanning, or editing a payment; only amountless requests accept a user-entered amount.
+- Keep typed amounts in whole sats and round generated receive invoices up to whole sats before checking limits. Lightning Address callbacks reject fractional-sat requests to preserve exact invoice matching.
+
 ## [0.3.1] - 2026-10-08
 
 - Distinguish idle invoice subscriptions awaiting a response from disconnected streams.

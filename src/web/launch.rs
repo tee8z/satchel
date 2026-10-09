@@ -20,23 +20,31 @@ use crate::util::{format_msat, format_time, random_token};
 const MINUTE: Duration = Duration::from_secs(60);
 
 /// What a link points at, as the Send field should hold it, and a description.
-async fn prepare(app: &App, target: &str) -> Result<(String, Markup), WalletError> {
+async fn prepare(app: &App, target: &str) -> Result<(String, Markup, Option<String>), WalletError> {
     match lnurl::parse_destination(target)? {
         Destination::Invoice(bolt11) => {
             let decoded = app.wallet.decode(&bolt11).await?;
-            Ok((bolt11, invoice_details(&decoded)))
+            Ok((bolt11, invoice_details(&decoded), invoice_amount(decoded.num_msat)))
         }
         Destination::Address { user, domain } => {
             let address = format!("{user}@{domain}");
             let details = html! { p { "To " strong { (address) } ". Enter the amount below." } };
-            Ok((address, details))
+            Ok((address, details, None))
         }
         Destination::Lnurl(url) => {
             let details =
                 html! { p { "To " strong { (url.host_str().unwrap_or_default()) } ". Enter the amount below." } };
-            Ok((target.trim().to_owned(), details))
+            Ok((target.trim().to_owned(), details, None))
         }
     }
+}
+
+/// A fixed invoice amount for an input, retaining its exact millisatoshis.
+pub(super) fn invoice_amount(msat: u64) -> Option<String> {
+    (msat > 0).then(|| match msat % 1000 {
+        0 => (msat / 1000).to_string(),
+        rest => format!("{}.{rest:03}", msat / 1000),
+    })
 }
 
 fn invoice_details(decoded: &DecodedInvoice) -> Markup {
@@ -77,12 +85,14 @@ pub(super) async fn lightning(
         Err(WalletError::invalid("Too many links opened. Wait a minute."))
     };
     // Errors show in the Send form as usual, with the link's text kept.
-    let (destination, details, error) = match prepared {
-        Ok((destination, details)) => (destination, Some(details), None),
-        Err(error) => (target.trim().to_owned(), None, Some(shown(&error))),
+    let (destination, details, amount, error) = match prepared {
+        Ok((destination, details, amount)) => (destination, Some(details), amount, None),
+        Err(error) => (target.trim().to_owned(), None, None, Some(shown(&error))),
     };
     let values = SendValues {
         destination: &destination,
+        amount: amount.as_deref().unwrap_or_default(),
+        fixed_amount: amount.is_some(),
         details,
         ..SendValues::default()
     };

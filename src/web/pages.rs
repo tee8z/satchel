@@ -184,8 +184,8 @@ fn nostr_button(mode: &str, label: &str, csrf: Option<&str>, next: Option<&str>)
     }
 }
 
-pub(crate) fn signup(ctx: &Ctx<'_>, domain: &str, error: Option<&str>, username: &str) -> Markup {
-    signup_with(ctx, domain, error, username, None)
+pub(crate) fn signup(ctx: &Ctx<'_>, domain: &str, error: Option<&str>, username: &str, next: &str) -> Markup {
+    signup_with(ctx, domain, error, username, None, next)
 }
 
 /// Another app handed over a Nostr key no wallet uses yet. The sign-up form
@@ -201,6 +201,7 @@ pub(crate) fn signup_with(
     error: Option<&str>,
     username: &str,
     handoff: Option<&HandoffSignup<'_>>,
+    next: &str,
 ) -> Markup {
     let title = if handoff.is_some() {
         "Create your wallet"
@@ -220,6 +221,7 @@ pub(crate) fn signup_with(
             }
             @if let Some(error) = error { p.error role="alert" { (error) } }
             form.card method="post" action="/signup" {
+                input type="hidden" name="next" value=(next);
                 label for="username" { "Username" }
                 div.with-suffix {
                     input #username name="username" required minlength="3" maxlength="32" value=(username)
@@ -240,12 +242,19 @@ pub(crate) fn signup_with(
             @if handoff.is_none() {
                 section.card {
                     p { "Or sign up with a Nostr signer extension (NIP-07), using the username above:" }
-                    (nostr_button("signup", "Sign up with Nostr", None, None))
+                    (nostr_button("signup", "Sign up with Nostr", None, Some(next)))
                 }
-                p { "Already have a wallet? " a href="/login" { "Log in" } }
             }
+            p { "Already have a wallet? " a href=(auth_link("/login", next)) { "Log in" } }
         },
     )
+}
+
+fn auth_link(path: &str, next: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("next", next)
+        .finish();
+    format!("{path}?{query}")
 }
 
 /// `next` is the local path to open after logging in.
@@ -269,7 +278,7 @@ pub(crate) fn login(ctx: &Ctx<'_>, error: Option<&str>, username: &str, next: &s
                 p { "Linked a Nostr key? Log in with your signer extension:" }
                 (nostr_button("login", "Log in with Nostr", None, Some(next)))
             }
-            p { "New here? " a href="/signup" { "Create a wallet" } }
+            p { "New here? " a href=(auth_link("/signup", next)) { "Create a wallet" } }
         },
     )
 }
@@ -402,8 +411,9 @@ pub(crate) fn invoice_status(invoice: &Invoice) -> Markup {
 pub(crate) struct SendValues<'a> {
     pub(crate) destination: &'a str,
     pub(crate) amount: &'a str,
+    pub(crate) fixed_amount: bool,
     pub(crate) comment: &'a str,
-    /// What a deep link points at; the button then reads Pay.
+    /// The amount, description, and expiry supplied by a deep link.
     pub(crate) details: Option<Markup>,
 }
 
@@ -426,7 +436,7 @@ pub(crate) fn send_section(
     html! {
         section.card #send {
             h2 { "Send sats" }
-            @if let Some(details) = &values.details { (details) }
+            @if let Some(details) = &values.details { div data-invoice-details { (details) } }
             p.muted { "Paste a payment request. You’ll review the details before sending." }
             form method="post" action="/wallet/send/review" hx-post="/wallet/send/review" hx-target="#send" hx-swap="outerHTML"
                 hx-disable="find button" {
@@ -439,8 +449,12 @@ pub(crate) fn send_section(
                 (scanner("send-to"))
                 p.muted.field-help { "Lightning invoice, name@example.com, or LNURL" }
                 label for="send-amount" { "Amount (sats)" }
-                input #send-amount name="amount_sat" inputmode="numeric" value=(values.amount) placeholder="Enter an amount" aria-describedby="amount-help";
-                p.muted.field-help #amount-help { "Leave blank when the invoice already includes an amount." }
+                input #send-amount name=[(!values.fixed_amount).then_some("amount_sat")] inputmode="numeric" value=(values.amount) readonly[values.fixed_amount]
+                    placeholder="Enter an amount" aria-describedby="amount-help";
+                p.muted.field-help #amount-help {
+                    @if values.fixed_amount { "Amount set by the invoice." }
+                    @else { "Enter an amount for an address or an invoice without an amount." }
+                }
                 label for="send-comment" { "Note to recipient (optional)" }
                 input #send-comment name="comment" maxlength="140" value=(values.comment);
                 button type="submit" { "Review payment" (icon("arrow-right")) }
@@ -482,7 +496,7 @@ pub(crate) fn send_review(
                     input type="hidden" name="csrf" value=(csrf);
                     input type="hidden" name="key" value=(key);
                     input type="hidden" name="destination" value=(values.destination);
-                    input type="hidden" name="amount_sat" value=(values.amount);
+                    input type="hidden" name="amount_sat" value=(if values.fixed_amount { "" } else { values.amount });
                     input type="hidden" name="comment" value=(values.comment);
                     input type="hidden" name="max_fee_msat" value=(preview.fee_limit_msat);
                     button.secondary[secondary] type="submit" { (label) }

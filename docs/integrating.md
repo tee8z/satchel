@@ -58,13 +58,14 @@ const link = `${SATCHEL}/launch/lightning/${encodeURIComponent(invoice)}`;
 
 What the user sees:
 
-- **Invoice:** the Send screen shows the invoice's amount, description, and
-  expiry, and a **Pay** button. Nothing is paid until the user taps Pay.
-  Invoices without an amount ask for one.
+- **Invoice:** the Send screen fills and locks the invoice amount. It also shows
+  the description and expiry. The user selects **Review payment**, then **Confirm and send**.
+  Invoices with no amount or a zero amount require a positive whole-sat amount.
 - **Lightning Address:** the Send screen shows the address. The user enters an
   amount (and an optional comment), then sends.
-- **Signed out:** the user signs in with a password, a Nostr extension, or a
-  handoff, then lands back on the same link.
+- **Signed in:** the payment opens in the current Satchel wallet.
+- **Signed out:** the user logs in with a password or Nostr extension, then returns to the invoice.
+  Choosing **Create a wallet** also preserves the invoice through signup.
 - **Problems:** the Send form shows its usual error for an invalid or expired
   invoice. It does the same for an invoice from another network, judged by
   its prefix:
@@ -78,10 +79,18 @@ What the user sees:
 
   `lnbc` (mainnet) is always refused.
 
+Pasted and scanned invoices follow the same amount rules. Fixed external invoices
+keep their exact amount, including any millisatoshis. Users can enter only whole sats.
+
+Satchel rounds generated receive invoices up to whole sats before checking receive
+and balance limits. Lightning Address callbacks require whole-sat amounts expressed
+in millisatoshis: multiples of `1000`. Fractional requests return an error because
+[LNURL-pay requires the invoice amount to equal the requested amount](https://github.com/lnurl/luds/blob/luds/06.md).
+
 ### `next`
 
-Sign-in pages and handoffs take a `next` parameter: the page to open after
-signing in. It must be a local path:
+Login, signup, and handoffs take a `next` parameter: the page to open after
+authentication. It must be a local path:
 
 - one leading `/`, and no `//` anywhere;
 - no `\`, spaces, or control characters, only printable ASCII;
@@ -95,8 +104,12 @@ Anything else is replaced by `/wallet`. A deep link such as
 Your page holds the user's Nostr key, either through a NIP-07 signer
 (`window.nostr`) or as a key your app keeps in the browser. It signs a
 [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) HTTP auth
-event and posts it to Satchel in a top-level form. Satchel signs the user in
-to the wallet that uses that key, or offers to create one.
+event and posts it to Satchel in a top-level form. For wallet navigation,
+Satchel signs in with that key or offers to create its wallet.
+
+Payment handoffs with `next=/launch/lightning/...` use the current Satchel session
+or ask the user to log in. The app's key does not select the paying wallet.
+Apps can also use a direct payment link without signing an event.
 
 ### The event
 
@@ -176,7 +189,7 @@ async function openSatchel({ next = "/wallet", name } = {}) {
 }
 
 button.addEventListener("click", () => {
-  openSatchel({ next: `/launch/lightning/${encodeURIComponent(invoice)}`, name: "alice" }).catch(console.error);
+  openSatchel({ next: "/wallet", name: "alice" }).catch(console.error);
 });
 ```
 
@@ -201,6 +214,13 @@ its own origin afterwards, and browsers check those redirects against
 Requests are also rate-limited per client address.
 
 ### What happens next
+
+For payment handoffs, Satchel redirects to the payment link after validating the
+event. This GET request restores the browser's Satchel session cookie.
+If the session is missing, login preserves the invoice. Payment handoffs never
+create or switch wallets automatically.
+
+Other handoffs use the Nostr key:
 
 | Situation | Result |
 | --- | --- |

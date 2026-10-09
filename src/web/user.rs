@@ -15,7 +15,7 @@ use super::pages::{self, Ctx, HandoffSignup, ReceiveState, SendValues, WalletVie
 use super::{App, ClientIp, Reject, Shared, UserSession, check_csrf, is_htmx, redirect, redirect_with_cookie};
 use crate::auth;
 use crate::error::WalletError;
-use crate::handoff::{DEFAULT_NEXT, Purpose, safe_next, short_npub};
+use crate::handoff::{Purpose, safe_next, short_npub};
 use crate::lnurl;
 use crate::metrics::inc;
 use crate::nostr;
@@ -51,16 +51,23 @@ pub(super) async fn home(State(app): State<Shared>, headers: HeaderMap) -> Resul
     Ok(pages::landing(&Ctx::visitor(&app.wallet), &app.wallet.domain).into_response())
 }
 
-pub(super) async fn signup_page(State(app): State<Shared>, headers: HeaderMap) -> Result<Response, Reject> {
+pub(super) async fn signup_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(query): Query<NextQuery>,
+) -> Result<Response, Reject> {
+    let next = safe_next(&query.next);
     if UserSession::from_headers(&app, &headers).await?.is_some() {
-        return Ok(redirect("/wallet"));
+        return Ok(redirect(&next));
     }
-    Ok(pages::signup(&Ctx::visitor(&app.wallet), &app.wallet.domain, None, "").into_response())
+    Ok(pages::signup(&Ctx::visitor(&app.wallet), &app.wallet.domain, None, "", &next).into_response())
 }
 
 #[derive(Deserialize)]
 pub(super) struct SignupForm {
     username: String,
+    #[serde(default)]
+    next: String,
     #[serde(default)]
     password: String,
     #[serde(default)]
@@ -89,6 +96,10 @@ pub(super) async fn signup(
             None => return Ok(super::handoff::expired(&ctx)),
         },
     };
+    let next = pending
+        .as_ref()
+        .map(|pending| pending.next.clone())
+        .unwrap_or_else(|| safe_next(&form.next));
     let npub = pending.as_ref().map(|pending| short_npub(&pending.nostr_pubkey));
     let handoff_page = npub.as_deref().map(|npub| HandoffSignup {
         token: &form.handoff,
@@ -101,6 +112,7 @@ pub(super) async fn signup(
             Some(message),
             &form.username,
             handoff_page.as_ref(),
+            &next,
         )
         .into_response()
     };
@@ -164,7 +176,7 @@ pub(super) async fn signup(
                 .await?;
             pending.next.clone()
         }
-        None => DEFAULT_NEXT.to_owned(),
+        None => next,
     };
     let cookie = app.start_session(Some(account.id)).await?;
     Ok(redirect_with_cookie(&next, cookie))
@@ -359,7 +371,7 @@ pub(super) async fn nostr_auth(
             app.note_new_account(account.id, ip).await;
             tracing::info!(account = account.id, "account created with Nostr");
             let cookie = app.start_session(Some(account.id)).await?;
-            Ok(json_redirect("/wallet", Some(cookie)))
+            Ok(json_redirect(&safe_next(&body.next), Some(cookie)))
         }
         "link" => {
             let Some(session) = UserSession::from_headers(&app, &headers).await? else {
@@ -585,27 +597,81 @@ pub(super) struct SendForm {
     comment: String,
     #[serde(default)]
     max_fee_msat: Option<u64>,
+    #[serde(skip)]
+    fixed_amount: bool,
 }
 
 impl SendForm {
+    async fn load_invoice(&mut self, app: &App) -> Result<(), WalletError> {
+        if let lnurl::Destination::Invoice(bolt11) = lnurl::parse_destination(&self.destination)? {
+            let decoded = app.wallet.decode(&bolt11).await?;
+            self.destination = bolt11;
+            if let Some(amount) = super::launch::invoice_amount(decoded.num_msat) {
+                self.amount_sat = amount;
+                self.fixed_amount = true;
+            }
+        }
+        Ok(())
+    }
+
     fn values(&self) -> SendValues<'_> {
         SendValues {
             destination: &self.destination,
             amount: &self.amount_sat,
+            fixed_amount: self.fixed_amount,
             comment: &self.comment,
             ..SendValues::default()
         }
     }
 }
 
+#[derive(Deserialize)]
+pub(super) struct AmountForm {
+    csrf: String,
+    destination: String,
+}
+
+/// Read-only invoice decoding for pasting and scanning in the Send form.
+pub(super) async fn send_amount(
+    State(app): State<Shared>,
+    session: UserSession,
+    Form(form): Form<AmountForm>,
+) -> Result<Response, Reject> {
+    check_csrf(&session.csrf, &form.csrf)?;
+    if !app.allow(
+        "decode",
+        &session.account.id.to_string(),
+        app.rate.send_per_account_per_minute,
+        MINUTE,
+    ) {
+        return Ok(json_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many payment checks. Wait a minute.",
+        ));
+    }
+    let result = async {
+        match lnurl::parse_destination(&form.destination)? {
+            lnurl::Destination::Invoice(bolt11) => {
+                let decoded = app.wallet.decode(&bolt11).await?;
+                Ok::<_, WalletError>(super::launch::invoice_amount(decoded.num_msat))
+            }
+            _ => Ok(None),
+        }
+    }
+    .await;
+    Ok(match result {
+        Ok(amount) => Json(json!({ "amount_sat": amount })).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, &shown(&error)),
+    })
+}
+
 pub(super) async fn review_send(
     State(app): State<Shared>,
     session: UserSession,
     headers: HeaderMap,
-    Form(form): Form<SendForm>,
+    Form(mut form): Form<SendForm>,
 ) -> Result<Response, Reject> {
     check_csrf(&session.csrf, &form.csrf)?;
-    let amount = form.amount_sat.trim();
     let result = if !app.allow(
         "review",
         &session.account.id.to_string(),
@@ -613,7 +679,9 @@ pub(super) async fn review_send(
         MINUTE,
     ) {
         Err(WalletError::invalid("Too many payment checks. Wait a minute."))
-    } else if !amount.is_empty() && msat_from_sats(amount).is_none() {
+    } else if let Err(error) = form.load_invoice(&app).await {
+        Err(error)
+    } else if !form.fixed_amount && !form.amount_sat.trim().is_empty() && msat_from_sats(&form.amount_sat).is_none() {
         Err(WalletError::invalid("Enter a whole number of sats."))
     } else {
         app.wallet
@@ -622,7 +690,7 @@ pub(super) async fn review_send(
                 &PayRequest {
                     request_key: form.key.clone(),
                     destination: form.destination.clone(),
-                    amount_msat: msat_from_sats(amount),
+                    amount_msat: msat_from_sats(&form.amount_sat),
                     comment: form.comment.clone(),
                     max_fee_msat: None,
                 },
@@ -641,10 +709,20 @@ pub(super) async fn edit_send(
     State(app): State<Shared>,
     session: UserSession,
     headers: HeaderMap,
-    Form(form): Form<SendForm>,
+    Form(mut form): Form<SendForm>,
 ) -> Result<Response, Reject> {
     check_csrf(&session.csrf, &form.csrf)?;
-    let section = pages::send_section(&session.csrf, &form.key, &form.values(), None);
+    let error = if app.allow(
+        "decode",
+        &session.account.id.to_string(),
+        app.rate.send_per_account_per_minute,
+        MINUTE,
+    ) {
+        form.load_invoice(&app).await.err().map(|error| shown(&error))
+    } else {
+        Some("Too many payment checks. Wait a minute.".to_owned())
+    };
+    let section = pages::send_section(&session.csrf, &form.key, &form.values(), error.as_deref().map(Err));
     respond(&app, &session, &headers, section, WalletView::Send, false).await
 }
 
@@ -652,7 +730,7 @@ pub(super) async fn send(
     State(app): State<Shared>,
     session: UserSession,
     headers: HeaderMap,
-    Form(form): Form<SendForm>,
+    Form(mut form): Form<SendForm>,
 ) -> Result<Response, Reject> {
     check_csrf(&session.csrf, &form.csrf)?;
     let amount = form.amount_sat.trim();
@@ -680,12 +758,10 @@ pub(super) async fn send(
             Some(Ok(payment)),
         ),
         Err(error) => {
-            let values = SendValues {
-                destination: &form.destination,
-                amount: &form.amount_sat,
-                comment: &form.comment,
-                ..SendValues::default()
-            };
+            if app.allow("decode", &account_key, app.rate.send_per_account_per_minute, MINUTE) {
+                let _ = form.load_invoice(&app).await;
+            }
+            let values = form.values();
             pages::send_section(&session.csrf, &random_token(), &values, Some(Err(&shown(error))))
         }
     };

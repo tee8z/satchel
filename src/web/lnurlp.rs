@@ -116,6 +116,7 @@ pub(super) async fn callback(
         .create_invoice(&account, amount_msat, &comment, true)
         .await
         .map_err(|error| match error {
+            WalletError::Invalid(message) => LnurlError::new(message),
             WalletError::LimitExceeded(_) | WalletError::Frozen => {
                 LnurlError::new("Amount is outside the accepted range")
             }
