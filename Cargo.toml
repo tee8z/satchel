@@ -1,5 +1,5 @@
 [package]
-version = "0.3.3"
+version = "0.3.4"
 name = "satchel"
 description = "Multi-account Lightning wallet and Lightning Address server for test networks (Mutinynet/signet). Not for mainnet."
 authors = ["Luis Schwab <dev@luisschwab.net>", "Tee8z <tee8z@protonmail.com>"]

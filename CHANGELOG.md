@@ -7,6 +7,12 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-10-09
+
+- Reserve a password worker before spending a sign-up proof of work, a per-network sign-up slot, or a login attempt, so a busy refusal costs nothing and the same form can be sent again.
+- Check a new password before verifying the current one, and verify and hash in one job, when changing a password.
+- Show the login, sign-up, settings, and operator login forms again with a busy message (HTTP 503 with `Retry-After`) instead of a plain error page.
+
 ## [0.3.3] - 2026-10-09
 
 - Limit all HTTP password checks and hashing to two workers. Excess requests receive HTTP 503 with `Retry-After`.
