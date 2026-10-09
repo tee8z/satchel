@@ -209,6 +209,7 @@ pub(crate) fn router(app: Shared) -> Router {
         .route("/wallet/send", get(user::send_page).post(user::send))
         .route("/wallet/send/review", post(user::review_send))
         .route("/wallet/send/edit", post(user::edit_send))
+        .route("/wallet/send/amount", post(user::send_amount))
         .route("/wallet/payment/{id}", get(user::payment_status))
         .route("/wallet/faucet", post(user::faucet))
         .route("/settings", get(user::settings_page))

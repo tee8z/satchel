@@ -237,7 +237,7 @@ async fn the_nostr_extension_login_returns_to_next() {
 async fn a_trusted_app_hands_over_a_signed_out_browser() {
     let h = trusted().await;
     nostr_account(&h, "alice", 5).await;
-    let next = "/launch/lightning/bob@wallet.example.org";
+    let next = "/wallet";
     let event = handoff_event(5, now(), None);
     let started = hand_off(&h, &event, next, Some(APP)).await;
     let done = resume(&h, &started, None).await;
@@ -417,7 +417,7 @@ async fn a_handoff_for_another_wallet_asks_before_switching() {
 #[tokio::test]
 async fn a_new_key_creates_a_wallet_through_the_sign_up_form() {
     let h = trusted().await;
-    let next = "/launch/lightning/bob@wallet.example.org";
+    let next = "/settings";
     let event = handoff_event(9, now(), Some(" Nora "));
     let page = hand_off(&h, &event, next, Some(APP)).await;
     assert_eq!(page.status, StatusCode::OK, "{}", page.body);
@@ -610,4 +610,74 @@ async fn the_camera_is_allowed_for_this_site_only() {
     );
     let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
     assert!(csp.contains("default-src 'none'") && csp.contains("form-action 'self'"));
+}
+
+#[tokio::test]
+async fn payment_handoffs_keep_the_current_wallet_or_offer_login_with_the_invoice() {
+    let h = trusted().await;
+    let alice = password_account(&h, "alice").await;
+    let cookie = session_for(&h, &alice).await;
+    nostr_account(&h, "other-wallet", 5).await;
+    let (bolt11, _) = h.lnd.external_invoice(21_000, None);
+    let next = format!("/launch/lightning/{bolt11}");
+    // The cross-site form POST has no session cookie. The redirect GET has it.
+    // Both an unknown app key and a key tied to another wallet must keep Alice.
+    for secret in [9, 5] {
+        let started = hand_off(&h, &handoff_event(secret, now(), None), &next, Some(APP)).await;
+        assert_eq!(started.location.as_deref(), Some(next.as_str()));
+        assert!(
+            started.cookie.is_none(),
+            "a payment handoff must not replace the session"
+        );
+        let page = get(&h.app, &next, Some(&cookie)).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(page.body.contains(&bolt11));
+        assert!(page.body.contains("Review payment"));
+        assert!(!page.body.contains("Create your wallet"));
+        assert!(
+            get(&h.app, "/wallet", Some(&cookie))
+                .await
+                .body
+                .contains("alice@wallet.example.org")
+        );
+    }
+    let login = get(&h.app, &next, None).await;
+    let page = get(&h.app, login.location.as_deref().unwrap(), None).await;
+    assert_eq!(field(&page.body, "next"), next);
+    assert!(page.body.contains("Log in with Nostr"));
+    let form = format!("username=alice&password=wrong&next={}", encode(&next));
+    let failed = post(&h.app, "/login", None, &form, Some(SITE)).await;
+    assert_eq!(field(&failed.body, "next"), next);
+    let form = form.replace("password=wrong", "password=correct+horse+battery");
+    let logged_in = post(&h.app, "/login", None, &form, Some(SITE)).await;
+    assert_eq!(logged_in.location.as_deref(), Some(next.as_str()));
+    let loaded = get(&h.app, &next, logged_in.cookie.as_deref()).await;
+    assert!(loaded.body.contains(&bolt11));
+    assert!(h.lnd.lock().sends.is_empty());
+}
+
+#[tokio::test]
+async fn choosing_signup_keeps_the_invoice_through_validation_and_creation() {
+    let h = harness().await;
+    let (bolt11, _) = h.lnd.external_invoice(21_000, None);
+    let next = format!("/launch/lightning/{bolt11}");
+    let signup_url = format!("/signup?next={}", encode(&next));
+    let login = get(&h.app, &format!("/login?next={}", encode(&next)), None).await;
+    assert!(login.body.contains(&format!("href=\"{signup_url}\"")));
+    let signup = get(&h.app, &signup_url, None).await;
+    assert_eq!(field(&signup.body, "next"), next);
+    assert!(signup.body.contains(&format!("data-next=\"{next}\"")));
+    let form = format!("username=alice&password=short&confirm=short&next={}", encode(&next));
+    let retry = post(&h.app, "/signup", None, &form, Some(SITE)).await;
+    assert_eq!(field(&retry.body, "next"), next);
+    let form = format!(
+        "{}&next={}",
+        super::web_flows::sign_up_form(&h.app, "alice").await,
+        encode(&next)
+    );
+    let created = post(&h.app, "/signup", None, &form, Some(SITE)).await;
+    assert_eq!(created.location.as_deref(), Some(next.as_str()));
+    let loaded = get(&h.app, &next, created.cookie.as_deref()).await;
+    assert!(loaded.body.contains(&bolt11));
+    assert!(h.lnd.lock().sends.is_empty());
 }

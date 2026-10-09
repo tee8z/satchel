@@ -205,6 +205,54 @@ async function nostrAuth(button) {
   }
 }
 
+// Decode pasted or scanned invoices on the server. Replacing a destination
+// immediately discards its fixed amount, and late responses cannot restore it.
+let amountLookup = 0;
+let amountTimer = null;
+let amountRequest = null;
+document.addEventListener("input", (event) => {
+  const field = event.target;
+  if (!(field instanceof HTMLTextAreaElement) || field.id !== "send-to") return;
+  const form = field.form;
+  const amount = form.querySelector("#send-amount");
+  const help = form.querySelector("#amount-help");
+  const lookup = ++amountLookup;
+  clearTimeout(amountTimer);
+  if (amountRequest) amountRequest.abort();
+  if (amount.readOnly) amount.value = "";
+  form.closest("#send").querySelector("[data-invoice-details]")?.remove();
+  const destination = field.value.trim();
+  amount.readOnly = !!destination;
+  amount.name = destination ? "" : "amount_sat";
+  help.textContent = destination ? "Reading payment request…" : "Enter a payment request first.";
+  if (!destination) return;
+  amountTimer = setTimeout(async () => {
+    const controller = new AbortController();
+    amountRequest = controller;
+    const current = () => lookup === amountLookup && field.isConnected && field.value.trim() === destination;
+    try {
+      const response = await fetch("/wallet/send/amount", {
+        method: "POST",
+        body: new URLSearchParams({ destination, csrf: form.elements.csrf.value }),
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (!current()) return;
+      if (!response.ok || result.error) throw new Error(result.error || "Could not read the payment request.");
+      amount.readOnly = result.amount_sat !== null;
+      amount.name = amount.readOnly ? "" : "amount_sat";
+      if (amount.readOnly) amount.value = result.amount_sat;
+      help.textContent = amount.readOnly
+        ? "Amount set by the invoice."
+        : "Enter the amount to send in sats.";
+    } catch (error) {
+      if (!current() || error.name === "AbortError") return;
+      help.textContent = error.message || "Could not read the payment request. Review payment to retry.";
+    }
+  }, 300);
+});
+
 // QR scanning fills the Send field from the camera. It needs the browser's
 // BarcodeDetector (Chromium on Android, ChromeOS, and macOS); elsewhere the
 // Scan button stays hidden and people paste instead.
@@ -276,6 +324,7 @@ async function startScan(button) {
           const value = lightningText(codes[0].rawValue);
           if (value) {
             field.value = value;
+            field.dispatchEvent(new Event("input", { bubbles: true }));
             stopScan();
             say("Scanned. Check the details, then send.");
             field.focus();

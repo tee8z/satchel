@@ -3,6 +3,7 @@
 
 mod browser;
 mod handoff_flows;
+mod invoice_flows;
 mod ledger;
 mod lnurl_endpoints;
 mod mock;

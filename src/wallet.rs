@@ -189,7 +189,8 @@ impl Wallet {
         }
         let balance = u64::try_from(self.db.balance(account.id).await?).unwrap_or(0);
         let room = self.limits.max_balance_msat.saturating_sub(balance);
-        let max = room.min(self.limits.max_receive_msat);
+        // Invoice amounts are whole sats, including the advertised LNURL range.
+        let max = room.min(self.limits.max_receive_msat) / 1000 * 1000;
         Ok((max >= self.limits.min_receive_msat).then_some((self.limits.min_receive_msat, max)))
     }
 
@@ -205,6 +206,18 @@ impl Wallet {
         if account.frozen {
             return Err(WalletError::Frozen);
         }
+        // LNURL senders verify the invoice equals the amount they requested.
+        // Reject fractional requests there instead of returning a mismatched
+        // invoice. Wallet receive requests can round up before applying limits.
+        if for_lnurl && !amount_msat.is_multiple_of(1000) {
+            return Err(WalletError::invalid(
+                "Request a whole number of sats (a multiple of 1000 millisatoshis).",
+            ));
+        }
+        let amount_msat = amount_msat
+            .div_ceil(1000)
+            .checked_mul(1000)
+            .ok_or_else(|| WalletError::invalid("The receive amount is too large."))?;
         let source = if for_lnurl { "lnurl" } else { "wallet" };
         if self.db.open_invoice_count(account.id, source).await? >= i64::from(self.limits.max_open_invoices) {
             return Err(WalletError::TooManyInvoices);

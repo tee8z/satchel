@@ -131,6 +131,12 @@ pub(super) async fn start(
         ));
     }
     let next = safe_next(&form.next);
+    // A payment link opens the wallet the person chooses in Satchel. The
+    // cross-site POST may omit its SameSite cookie; the GET redirect restores
+    // it, or asks for login while keeping the payment request in `next`.
+    if next.starts_with("/launch/lightning/") {
+        return Ok(redirect(&next));
+    }
     let db = &app.wallet.db;
     match db.account_by_nostr(&pubkey).await? {
         Some(account) if account.frozen => Ok(refused(&ctx, StatusCode::FORBIDDEN, FROZEN)),
@@ -153,7 +159,7 @@ pub(super) async fn start(
                 token: &token,
                 npub: &npub,
             };
-            Ok(pages::signup_with(&ctx, &app.wallet.domain, None, &username, Some(&page)).into_response())
+            Ok(pages::signup_with(&ctx, &app.wallet.domain, None, &username, Some(&page), &next).into_response())
         }
     }
 }
