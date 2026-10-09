@@ -378,16 +378,20 @@ impl IntoResponse for Reject {
                 "This form expired. Reload the page and try again.",
             )
                 .into_response(),
-            Self::Busy => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                [("retry-after", "1")],
-                "Password service is busy. Please try again shortly.",
-            )
-                .into_response(),
+            Self::Busy => (StatusCode::SERVICE_UNAVAILABLE, [("retry-after", "1")], BUSY).into_response(),
             Self::NotFound => (StatusCode::NOT_FOUND, "Not found.").into_response(),
             Self::Server => (StatusCode::INTERNAL_SERVER_ERROR, "Something went wrong. Try again.").into_response(),
         }
     }
+}
+
+/// What a password form says when every password worker is occupied.
+const BUSY: &str = "The wallet is busy. Try again in a moment.";
+
+/// A password form shown again because no worker was free. The request spent
+/// no attempt and no proof of work, so sending the same form again works.
+fn busy(form: impl FnOnce(&str) -> Response) -> Response {
+    (StatusCode::SERVICE_UNAVAILABLE, [("retry-after", "1")], form(BUSY)).into_response()
 }
 
 impl From<WorkError> for Reject {

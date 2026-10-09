@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use super::pages::{self, Ctx};
 use super::{
-    ClientIp, OperatorHost, OperatorSession, Reject, Shared, check_csrf, protect, redirect, redirect_with_cookie,
+    ClientIp, OperatorHost, OperatorSession, Reject, Shared, busy, check_csrf, protect, redirect, redirect_with_cookie,
 };
 use crate::abuse;
 use crate::auth;
@@ -38,14 +38,14 @@ pub(super) async fn login(
         return Err(Reject::NotFound);
     };
     let ctx = Ctx::visitor(&app.wallet);
+    let Ok(permit) = app.passwords.admit() else {
+        return Ok(busy(|message| pages::admin_login(&ctx, Some(message)).into_response()));
+    };
     if !app.allow("operator-login", &ip.key(), app.rate.login_per_ip_per_minute, MINUTE) {
         return Ok(pages::admin_login(&ctx, Some("Too many attempts. Wait a minute.")).into_response());
     }
     let password = form.password.clone();
-    let verified = app
-        .passwords
-        .run(move || auth::verify_password(&hash, &password))
-        .await?;
+    let verified = permit.run(move || auth::verify_password(&hash, &password)).await?;
     if !verified {
         inc(&app.wallet.metrics.login_failures);
         tracing::warn!(client = %ip.key(), "operator login failed");
