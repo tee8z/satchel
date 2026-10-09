@@ -80,7 +80,9 @@ challenges being solved; the page simply fetches a new one.
 
 Cheap checks run first (username rules, password rules, a taken name, the
 global cap), so a typo never wastes a solved challenge, and the proof of work
-is spent before the expensive password hash.
+is spent before the expensive password hash. A sign-up turned away because
+every password worker is busy keeps its challenge too (see
+[Password worker budget](configuration.md#password-worker-budget)).
 
 ### Difficulty
 

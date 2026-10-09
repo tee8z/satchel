@@ -2,7 +2,7 @@
 //! wallet page, Nostr login, the operator pages, and security headers.
 
 use axum::body::{Body, to_bytes};
-use axum::http::header::{CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN, SET_COOKIE};
+use axum::http::header::{CONTENT_TYPE, COOKIE, HOST, LOCATION, ORIGIN, RETRY_AFTER, SET_COOKIE};
 use axum::http::{Request, Response, StatusCode};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -17,6 +17,7 @@ pub(super) struct Reply {
     pub(super) status: StatusCode,
     pub(super) location: Option<String>,
     pub(super) cookie: Option<String>,
+    pub(super) retry_after: Option<String>,
     pub(super) body: String,
 }
 
@@ -30,11 +31,13 @@ pub(super) async fn read(response: Response<Body>) -> Reply {
     };
     let location = header(LOCATION);
     let cookie = header(SET_COOKIE).map(|cookie| cookie.split(';').next().unwrap().to_owned());
+    let retry_after = header(RETRY_AFTER);
     let body = to_bytes(response.into_body(), 1 << 22).await.unwrap();
     Reply {
         status,
         location,
         cookie,
+        retry_after,
         body: String::from_utf8(body.to_vec()).unwrap(),
     }
 }

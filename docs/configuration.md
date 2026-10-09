@@ -163,7 +163,8 @@ the key names above. The database is always
 
 All HTTP password hashing and verification share two blocking workers, with no waiting queue.
 This includes user login, operator login, signup, password changes, and dummy checks for unknown usernames.
-When both workers are occupied, requests receive HTTP 503 with `Retry-After: 1`.
+When both workers are occupied, the form is shown again with a short busy message, HTTP 503 and `Retry-After: 1`.
+A request turned away this way spends no login attempt, sign-up allowance or proof of work, so sending it again works.
 A disconnected request keeps its worker occupied until the password operation finishes.
 The fixed limit bounds ordinary Argon2 working memory to about 38 MiB; it does not cap total process memory.
 
