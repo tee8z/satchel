@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::auth::valid_request_key;
@@ -94,10 +94,20 @@ pub(crate) struct Wallet {
     pub(crate) metrics: Metrics,
     /// How long a request waits for a payment's result before showing it as pending.
     pub(crate) send_wait: Duration,
+    /// How long an invoice subscription may go unanswered before it is replaced.
+    pub(crate) stream_response_timeout: Duration,
     /// Payments a live task is still driving; reconciliation leaves them alone.
     in_flight: Mutex<HashSet<i64>>,
     /// The node's balances and when the reconciler last read them, so pages never wait on LND.
     node_balances: Mutex<Option<(NodeBalances, i64)>>,
+}
+
+/// How one invoice subscription ended without an error.
+enum StreamEnd {
+    /// LND closed the stream.
+    Closed,
+    /// LND sent nothing, not even response headers, within the response timeout.
+    Unanswered,
 }
 
 fn truncate(text: &str, max: usize) -> String {
@@ -153,6 +163,7 @@ impl Wallet {
             network,
             metrics: Metrics::default(),
             send_wait: Duration::from_secs(20),
+            stream_response_timeout: Duration::from_secs(config.lnd.invoice_stream_response_timeout_secs),
             in_flight: Mutex::default(),
             node_balances: Mutex::default(),
         }
@@ -788,28 +799,29 @@ impl Wallet {
         self.db.grant(&grant).await
     }
 
-    /// Credits a settled LND invoice to its account, once.
-    pub(crate) async fn credit_settled(&self, invoice: &LndInvoice) -> Result<(), WalletError> {
+    /// Credits a settled LND invoice to its account, once. True when this call credited it.
+    pub(crate) async fn credit_settled(&self, invoice: &LndInvoice) -> Result<bool, WalletError> {
         if !invoice.is_settled() {
-            return Ok(());
+            return Ok(false);
         }
         let Some(payment_hash) = invoice.payment_hash() else {
-            return Ok(());
+            return Ok(false);
         };
-        if let Some(credited) = self
+        let Some(credited) = self
             .db
             .settle_invoice(&payment_hash, to_i64(invoice.amt_paid_msat))
             .await?
-        {
-            let counter = if credited.source == "lnurl" {
-                &self.metrics.invoices_settled_lnurl
-            } else {
-                &self.metrics.invoices_settled_wallet
-            };
-            inc(counter);
-            info!(%payment_hash, amount_msat = invoice.amt_paid_msat, "invoice paid");
-        }
-        Ok(())
+        else {
+            return Ok(false);
+        };
+        let counter = if credited.source == "lnurl" {
+            &self.metrics.invoices_settled_lnurl
+        } else {
+            &self.metrics.invoices_settled_wallet
+        };
+        inc(counter);
+        info!(%payment_hash, amount_msat = invoice.amt_paid_msat, "invoice paid");
+        Ok(true)
     }
 
     /// Follows LND's invoice stream forever, reconnecting with backoff. Each
@@ -819,7 +831,16 @@ impl Wallet {
         loop {
             let started = Instant::now();
             match self.follow_invoices_once().await {
-                Ok(()) => warn!("LND invoice stream ended; reconnecting"),
+                // A quiet node answers nothing until its next invoice update, so
+                // this is no failure. A fresh request replaces one that a broken
+                // connection could never answer.
+                Ok(StreamEnd::Unanswered) => {
+                    inc(&self.metrics.invoice_stream_resubscribes);
+                    debug!("LND has not answered the invoice subscription; subscribing again");
+                    backoff = Duration::from_secs(1);
+                    continue;
+                }
+                Ok(StreamEnd::Closed) => warn!("LND invoice stream ended; reconnecting"),
                 Err(error) => warn!(%error, "LND invoice stream failed; reconnecting"),
             }
             self.metrics.invoice_stream_up.store(false, Ordering::Relaxed);
@@ -833,14 +854,27 @@ impl Wallet {
         }
     }
 
-    async fn follow_invoices_once(&self) -> anyhow::Result<()> {
+    async fn follow_invoices_once(&self) -> anyhow::Result<StreamEnd> {
         let cursor = u64::try_from(self.db.cursor(SETTLE_CURSOR).await?).unwrap_or(0);
         self.metrics.invoice_stream_connecting.store(true, Ordering::Relaxed);
-        let mut stream = self.lnd.subscribe_invoices(cursor).await?;
+        self.metrics
+            .invoice_stream_attempt
+            .store(now() as u64, Ordering::Relaxed);
+        let subscribe = self.lnd.subscribe_invoices(cursor);
+        let Ok(stream) = tokio::time::timeout(self.stream_response_timeout, subscribe).await else {
+            return Ok(StreamEnd::Unanswered);
+        };
+        let mut stream = stream?;
         self.metrics.invoice_stream_connecting.store(false, Ordering::Relaxed);
         self.metrics.invoice_stream_up.store(true, Ordering::Relaxed);
+        self.metrics
+            .invoice_stream_confirmed
+            .store(now() as u64, Ordering::Relaxed);
         info!(settle_index = cursor, "following LND invoices");
         while let Some(invoice) = stream.next().await? {
+            self.metrics
+                .invoice_stream_confirmed
+                .store(now() as u64, Ordering::Relaxed);
             self.credit_settled(&invoice).await?;
             if invoice.is_settled() && invoice.settle_index > 0 {
                 self.db
@@ -848,7 +882,7 @@ impl Wallet {
                     .await?;
             }
         }
-        Ok(())
+        Ok(StreamEnd::Closed)
     }
 
     /// Runs [`Wallet::reconcile`] now and then every minute.
@@ -902,12 +936,15 @@ impl Wallet {
         let mut success = true;
         for invoice in open {
             match self.lnd.lookup_invoice(invoice.payment_hash.clone()).await {
-                Ok(Some(lnd)) if lnd.is_settled() => {
-                    if let Err(error) = self.credit_settled(&lnd).await {
+                Ok(Some(lnd)) if lnd.is_settled() => match self.credit_settled(&lnd).await {
+                    // The invoice stream had not delivered this payment.
+                    Ok(true) => inc(&self.metrics.invoices_reconciled),
+                    Ok(false) => {}
+                    Err(error) => {
                         error!(%error, "cannot credit a settled invoice");
                         success = false;
                     }
-                }
+                },
                 Ok(Some(lnd)) if lnd.is_canceled() => success &= self.mark_canceled(&invoice.payment_hash).await,
                 // LND no longer knows it (a reset node) and it has expired: it cannot be paid.
                 Ok(None) if invoice.expires_at < now() - 3600 => {

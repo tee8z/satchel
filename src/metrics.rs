@@ -28,6 +28,14 @@ pub(crate) struct Metrics {
     pub(crate) invoice_stream_up: AtomicBool,
     pub(crate) invoice_stream_connecting: AtomicBool,
     pub(crate) invoice_stream_reconnects: AtomicU64,
+    /// When the current subscription request was sent, in Unix seconds.
+    pub(crate) invoice_stream_attempt: AtomicU64,
+    /// When LND last answered the subscription (headers or an update), in Unix seconds.
+    pub(crate) invoice_stream_confirmed: AtomicU64,
+    /// Subscriptions replaced because LND had not answered them in time.
+    pub(crate) invoice_stream_resubscribes: AtomicU64,
+    /// Settled invoices reconciliation credited before the stream delivered them.
+    pub(crate) invoices_reconciled: AtomicU64,
     pub(crate) reconciliation_last_attempt: AtomicU64,
     pub(crate) reconciliation_last_success: AtomicU64,
     pub(crate) reconciliation_failures: AtomicU64,
@@ -218,6 +226,16 @@ impl Metrics {
         );
         for (name, help, value) in [
             (
+                "satchel_invoice_stream_attempt_timestamp_seconds",
+                "When the current invoice subscription request was sent, or zero before the first.",
+                load(&self.invoice_stream_attempt),
+            ),
+            (
+                "satchel_invoice_stream_confirmed_timestamp_seconds",
+                "When LND last answered the invoice subscription (headers or an update), or zero.",
+                load(&self.invoice_stream_confirmed),
+            ),
+            (
                 "satchel_reconciliation_last_attempt_timestamp_seconds",
                 "Last reconciliation start, or zero before the first attempt.",
                 load(&self.reconciliation_last_attempt),
@@ -241,6 +259,18 @@ impl Metrics {
             "counter",
             "Invoice subscriptions that ended or failed and will be retried.",
             &[("", load(&self.invoice_stream_reconnects) as f64)],
+        );
+        metric(
+            "satchel_invoice_stream_resubscribes_total",
+            "counter",
+            "Invoice subscriptions LND left unanswered and Satchel replaced; not counted as reconnects.",
+            &[("", load(&self.invoice_stream_resubscribes) as f64)],
+        );
+        metric(
+            "satchel_invoices_reconciled_total",
+            "counter",
+            "Settled invoices that reconciliation credited before the invoice stream delivered them.",
+            &[("", load(&self.invoices_reconciled) as f64)],
         );
         out
     }
@@ -266,7 +296,13 @@ mod tests {
         metrics.rate_limited("lnurl-ip");
         inc(&metrics.blocked_requests);
         metrics.pow_difficulty.store(19, Ordering::Relaxed);
+        metrics.invoice_stream_attempt.store(1_700_000_000, Ordering::Relaxed);
+        inc(&metrics.invoice_stream_resubscribes);
         let text = metrics.render(&totals);
+        assert!(text.contains("satchel_invoice_stream_attempt_timestamp_seconds 1700000000\n"));
+        assert!(text.contains("satchel_invoice_stream_confirmed_timestamp_seconds 0\n"));
+        assert!(text.contains("satchel_invoice_stream_resubscribes_total 1\n"));
+        assert!(text.contains("satchel_invoices_reconciled_total 0\n"));
         assert!(text.contains("satchel_rate_limited_total{scope=\"signup\"} 2\n"));
         assert!(text.contains("satchel_rate_limited_total{scope=\"lnurl-ip\"} 1\n"));
         assert!(text.contains("satchel_blocked_requests_total 1\n"));

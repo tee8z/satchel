@@ -131,6 +131,7 @@ async fn lnurl_requests_are_rate_limited_per_account() {
 
 #[tokio::test]
 async fn the_invoice_stream_credits_payments_and_advances_its_cursor() {
+    use std::sync::atomic::Ordering::Relaxed;
     let h = harness().await;
     let alice = h.account("alice").await;
     let (_, reply, _) = get_json(&h.app, "/lnurlp/alice/callback?amount=5000000").await;
@@ -157,12 +158,54 @@ async fn the_invoice_stream_credits_payments_and_advances_its_cursor() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(h.sats(&alice).await, 5_000);
     assert_eq!(h.wallet.db.cursor("lnd_invoice_settle_index").await.unwrap(), 1);
+    assert!(h.wallet.metrics.invoice_stream_confirmed.load(Relaxed) > 0);
+    assert_eq!(h.wallet.metrics.invoices_reconciled.load(Relaxed), 0);
 
-    // Reconciliation finds payments the stream missed.
+    // Reconciliation finds payments the stream missed, and counts them.
     let invoice = h.wallet.create_invoice(&alice, 1_000_000, "", false).await.unwrap();
     h.lnd.pay(&invoice.payment_hash);
     h.wallet.reconcile().await;
     assert_eq!(h.sats(&alice).await, 6_000);
+    assert_eq!(h.wallet.metrics.invoices_reconciled.load(Relaxed), 1);
+}
+
+#[tokio::test]
+async fn an_unanswered_subscription_is_replaced_without_counting_a_reconnect() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let h = harness().await;
+    let alice = h.account("alice").await;
+    let invoice = h.wallet.create_invoice(&alice, 2_000_000, "", false).await.unwrap();
+    // A quiet node answers no subscription until it has an invoice update.
+    h.lnd.lock().silent_subscribes = u32::MAX;
+    tokio::spawn(h.wallet.clone().follow_invoices());
+    for _ in 0..100 {
+        if h.wallet.metrics.invoice_stream_resubscribes.load(Relaxed) >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(h.wallet.metrics.invoice_stream_resubscribes.load(Relaxed) >= 2);
+    assert_eq!(h.wallet.metrics.invoice_stream_reconnects.load(Relaxed), 0);
+    assert_eq!(h.wallet.metrics.invoice_stream_state(), "awaiting_response");
+    assert!(h.wallet.metrics.invoice_stream_attempt.load(Relaxed) > 0);
+    assert_eq!(h.wallet.metrics.invoice_stream_confirmed.load(Relaxed), 0);
+
+    // The node answers the next subscription, which then credits payments.
+    h.lnd.lock().silent_subscribes = 0;
+    let update = h.lnd.pay(&invoice.payment_hash);
+    h.lnd.stream.send(update).unwrap();
+    for _ in 0..100 {
+        if h.sats(&alice).await == 2_000 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(h.sats(&alice).await, 2_000);
+    assert_eq!(h.wallet.metrics.invoice_stream_state(), "connected");
+    assert!(h.wallet.metrics.invoice_stream_confirmed.load(Relaxed) > 0);
+    assert_eq!(h.wallet.metrics.invoice_stream_reconnects.load(Relaxed), 0);
+    assert_eq!(h.wallet.metrics.invoices_reconciled.load(Relaxed), 0);
+    assert!(h.lnd.lock().subscribes >= 3);
 }
 
 #[tokio::test]

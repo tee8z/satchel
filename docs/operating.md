@@ -389,15 +389,21 @@ database status, `invoice_stream`, `invoice_stream_state`, and `reconciliation_l
 It answers `503` when the database does not respond. Stream status does not change the HTTP status.
 
 `invoice_stream_state` is `connected`, `awaiting_response`, or `disconnected`.
-LND's REST proxy can wait for the first invoice before sending response headers.
-An idle `awaiting_response` subscription alone does not prove an outage.
+LND's REST proxy sends nothing, response headers included, until the node has an invoice update.
+A quiet node therefore keeps a healthy subscription in `awaiting_response` for hours,
+and an idle `awaiting_response` subscription alone does not prove an outage.
+A subscription LND has not answered within `lnd.invoice_stream_response_timeout_secs` (default ten minutes)
+is replaced by a new one, so a request that a broken connection can never answer does not wait for hours.
+The replacement is counted in `satchel_invoice_stream_resubscribes_total`, not as a reconnect.
+To tell a stalled subscription from a quiet node, compare it with the node's own invoice activity:
+if the node settled an invoice while the subscription stayed unanswered, the subscription missed it.
 
 Reconciliation checks invoices, pending payments, and node balances every minute.
 `reconciliation_last_success` is its last complete successful pass, in Unix seconds, or zero before success.
 A failed lookup or ledger write leaves the previous success time unchanged.
 
 Allow long idle connections through any LND proxy, while retaining connection and TLS handshake limits.
-For example, a 24-hour idle timeout avoids reconnecting every ten minutes during quiet periods.
+For example, a 24-hour idle timeout keeps a connected subscription open through quiet periods.
 
 `/metrics` is Prometheus text. It is served only on `server.metrics_address`
 (together with a second `/healthz`); keep that listener private.
@@ -433,6 +439,10 @@ Every metric is a total; none has a per-account label.
 | `satchel_invoice_stream_up` | gauge | `1` after LND accepts the invoice subscription. |
 | `satchel_invoice_stream_connecting` | gauge | `1` while waiting for LND's subscription response. |
 | `satchel_invoice_stream_reconnects_total` | counter | Subscription failures or endings followed by a reconnect. |
+| `satchel_invoice_stream_resubscribes_total` | counter | Subscriptions LND left unanswered for `lnd.invoice_stream_response_timeout_secs`, replaced without counting a reconnect. |
+| `satchel_invoice_stream_attempt_timestamp_seconds` | gauge | When the current subscription request was sent, in Unix seconds. |
+| `satchel_invoice_stream_confirmed_timestamp_seconds` | gauge | When LND last answered the subscription (response headers or an update), in Unix seconds, or zero before it first did. |
+| `satchel_invoices_reconciled_total` | counter | Settled invoices that reconciliation credited before the invoice stream delivered them. |
 | `satchel_reconciliation_last_attempt_timestamp_seconds` | gauge | Last reconciliation start, in Unix seconds. |
 | `satchel_reconciliation_last_success_timestamp_seconds` | gauge | Last complete successful reconciliation, in Unix seconds. |
 | `satchel_reconciliation_failures_total` | counter | Reconciliation passes with at least one failure. |
@@ -459,6 +469,11 @@ groups:
       - alert: SatchelInvoiceStreamReconnecting
         expr: increase(satchel_invoice_stream_reconnects_total[30m]) > 2
         for: 5m
+      - alert: SatchelInvoiceStreamMissedPayments
+        # Reconciliation credited payments the stream never delivered. It
+        # still credits them within a minute; the stream is not keeping up.
+        expr: increase(satchel_invoices_reconciled_total[30m]) > 2
+        for: 0m
       - alert: SatchelPaymentsStuck
         expr: satchel_pending_payments > 0
         for: 30m

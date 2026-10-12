@@ -38,6 +38,10 @@ pub(crate) struct MockState {
     pub(crate) channel_local_msat: u64,
     pub(crate) fail_lookup: bool,
     pub(crate) fail_balances: bool,
+    /// Subscriptions left unanswered before one is answered, as a quiet node does.
+    pub(crate) silent_subscribes: u32,
+    /// Invoice subscriptions requested so far.
+    pub(crate) subscribes: u32,
     counter: u64,
     settle_index: u64,
     stream: Option<mpsc::UnboundedReceiver<LndInvoice>>,
@@ -68,6 +72,8 @@ impl MockLnd {
                 channel_local_msat: 1_000_000_000_000,
                 fail_lookup: false,
                 fail_balances: false,
+                silent_subscribes: 0,
+                subscribes: 0,
                 counter: 0,
                 settle_index: 0,
                 stream: Some(receiver),
@@ -229,7 +235,13 @@ impl Lightning for MockLnd {
     }
 
     fn subscribe_invoices(&self, _settle_index: u64) -> BoxFuture<'_, Box<dyn InvoiceStream>> {
-        let receiver = self.lock().stream.take();
+        let mut state = self.lock();
+        state.subscribes += 1;
+        if state.silent_subscribes > 0 {
+            state.silent_subscribes -= 1;
+            return Box::pin(std::future::pending::<anyhow::Result<Box<dyn InvoiceStream>>>());
+        }
+        let receiver = state.stream.take();
         Box::pin(async move {
             let receiver = receiver.ok_or_else(|| anyhow!("mock stream already taken"))?;
             Ok(Box::new(MockStream(receiver)) as Box<dyn InvoiceStream>)
