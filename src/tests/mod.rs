@@ -91,6 +91,7 @@ pub(crate) async fn harness_with(adjust: impl FnOnce(&mut Config)) -> Harness {
         Url::parse(&config.server.public_url).unwrap(),
     );
     wallet.send_wait = Duration::from_secs(5);
+    wallet.stream_response_timeout = Duration::from_millis(50);
     let wallet = Arc::new(wallet);
     let admin = auth::hash_password("operator password").unwrap();
     let app = Arc::new(App::new(Arc::clone(&wallet), &config, Some(admin)).unwrap());

@@ -37,6 +37,7 @@ let
       macaroon_path = "lnd-macaroon";
       request_timeout_secs = cfg.lnd.requestTimeoutSecs;
       payment_timeout_secs = cfg.lnd.paymentTimeoutSecs;
+      invoice_stream_response_timeout_secs = cfg.lnd.invoiceStreamResponseTimeoutSecs;
       expected_network = cfg.lnd.expectedNetwork;
     };
     limits = cfg.limits;
@@ -168,6 +169,11 @@ in
         type = types.ints.positive;
         default = 60;
         description = "How long LND may try to route a payment.";
+      };
+      invoiceStreamResponseTimeoutSecs = mkOption {
+        type = types.ints.between 30 86400;
+        default = 600;
+        description = "How long the invoice subscription may wait for LND's first response before Satchel subscribes again.";
       };
     };
     limits = mkOption {

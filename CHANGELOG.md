@@ -7,6 +7,10 @@ rename configuration keys; the entry says so when it does.
 
 ## [Unreleased]
 
+- Replace an invoice subscription that LND has not answered within `lnd.invoice_stream_response_timeout_secs` (new, default 600), so a request on a broken connection no longer waits for hours. LND sends nothing until the node has an invoice update, so a quiet node's replacements are counted in `satchel_invoice_stream_resubscribes_total`, not as reconnects.
+- Report when the current subscription request was sent and when LND last answered it (`satchel_invoice_stream_attempt_timestamp_seconds`, `satchel_invoice_stream_confirmed_timestamp_seconds`).
+- Count settled invoices that reconciliation credited before the stream delivered them (`satchel_invoices_reconciled_total`).
+
 ## [0.3.4] - 2026-10-09
 
 - Reserve a password worker before spending a sign-up proof of work, a per-network sign-up slot, or a login attempt, so a busy refusal costs nothing and the same form can be sent again.

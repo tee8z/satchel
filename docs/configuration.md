@@ -72,6 +72,7 @@ characters.
 | `macaroon_path` | path | required | A macaroon with `info:read invoices:read invoices:write offchain:read offchain:write onchain:read`. See [operating.md](operating.md#the-macaroon). |
 | `request_timeout_secs` | integer | `10` | Deadline for one LND request. |
 | `payment_timeout_secs` | integer | `60` | How long LND may try to route an outgoing payment. |
+| `invoice_stream_response_timeout_secs` | integer | `600` | How long the invoice subscription may wait for LND's first response before Satchel subscribes again. LND's REST proxy sends nothing, headers included, until the node has an invoice update, so this also bounds a request that a broken connection can never answer. At least `30`. See [operating.md](operating.md#health-and-metrics). |
 | `expected_network` | string | none | Refuse to start unless LND reports exactly this network: `testnet`, `testnet4`, `signet`, `regtest`, or `simnet`. Mutinynet reports `signet`. Mainnet is refused whatever this says. |
 
 ## `[limits]`

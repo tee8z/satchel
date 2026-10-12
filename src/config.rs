@@ -77,6 +77,11 @@ pub(crate) struct Lnd {
     pub(crate) request_timeout_secs: u64,
     #[serde(default = "default_payment_timeout")]
     pub(crate) payment_timeout_secs: u32,
+    /// Subscribe to invoices again when LND has not answered a subscription in
+    /// this long. LND's REST proxy sends nothing, headers included, until the
+    /// node has an invoice update, so a request to a quiet node waits here.
+    #[serde(default = "default_stream_response_timeout")]
+    pub(crate) invoice_stream_response_timeout_secs: u64,
     /// Refuse to start unless LND reports exactly this network (for example `signet`).
     #[serde(default)]
     pub(crate) expected_network: Option<String>,
@@ -206,6 +211,9 @@ fn default_request_timeout() -> u64 {
 fn default_payment_timeout() -> u32 {
     60
 }
+fn default_stream_response_timeout() -> u64 {
+    600
+}
 
 /// Largest msat amount that survives a round trip through a JSON number.
 const MAX_SAFE_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
@@ -332,6 +340,9 @@ impl Config {
         if self.lnd.request_timeout_secs == 0 || self.lnd.payment_timeout_secs == 0 || self.server.session_days == 0 {
             bail!("timeouts and session_days must be positive");
         }
+        if self.lnd.invoice_stream_response_timeout_secs < 30 {
+            bail!("lnd.invoice_stream_response_timeout_secs must be at least 30");
+        }
         Ok(())
     }
 }
@@ -410,6 +421,18 @@ mod tests {
         assert!(Config::parse(text, operator).unwrap().server.operator_url.is_some());
         let insecure = vars(&[("SATCHEL_SERVER__OPERATOR_URL", "http://wallet-admin.example.org")]);
         assert!(Config::parse(text, insecure).is_err());
+    }
+
+    #[test]
+    fn the_stream_response_timeout_has_a_floor() {
+        let text = include_str!("../example/config.toml.example");
+        let config: Config = toml::from_str(text).unwrap();
+        assert_eq!(config.lnd.invoice_stream_response_timeout_secs, 600);
+        let short = vars(&[("SATCHEL_LND__INVOICE_STREAM_RESPONSE_TIMEOUT_SECS", "29")]);
+        assert!(Config::parse(text, short).is_err());
+        let long = vars(&[("SATCHEL_LND__INVOICE_STREAM_RESPONSE_TIMEOUT_SECS", "3600")]);
+        let config = Config::parse(text, long).unwrap();
+        assert_eq!(config.lnd.invoice_stream_response_timeout_secs, 3600);
     }
 
     #[test]

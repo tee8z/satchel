@@ -37,6 +37,9 @@ tls_cert_path = "tls.cert"
 macaroon_path = "wallet.macaroon"
 request_timeout_secs = 10
 payment_timeout_secs = 60
+# LND answers an invoice subscription only when the node has an invoice
+# update; subscribe again after this long without an answer.
+invoice_stream_response_timeout_secs = 600
 # Refuse to start unless LND is on exactly this network.
 expected_network = "signet"
 

@@ -59,7 +59,7 @@ async fn a_settled_invoice_credits_exactly_once() {
     // Invoices this server did not create are ignored.
     let mut stranger = update.clone();
     stranger.r_hash = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [9u8; 32]);
-    h.wallet.credit_settled(&stranger).await.unwrap();
+    assert!(!h.wallet.credit_settled(&stranger).await.unwrap());
     assert_eq!(h.sats(&alice).await, 21_000);
 }
 

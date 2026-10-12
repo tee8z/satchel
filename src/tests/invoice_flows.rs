@@ -189,8 +189,8 @@ async fn receive_inputs_require_whole_sats_and_generated_invoices_round_up() {
             expected
         );
         let paid = h.lnd.pay(&invoice.payment_hash);
-        h.wallet.credit_settled(&paid).await.unwrap();
-        h.wallet.credit_settled(&paid).await.unwrap();
+        assert!(h.wallet.credit_settled(&paid).await.unwrap());
+        assert!(!h.wallet.credit_settled(&paid).await.unwrap());
         balance += expected;
         assert_eq!(h.wallet.db.balance(account.id).await.unwrap(), balance);
     }

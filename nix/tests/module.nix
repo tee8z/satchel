@@ -75,6 +75,7 @@ pkgs.runCommand "satchel-module-check"
     assert lnd["tls_cert_path"] == "lnd-tls"
     assert lnd["macaroon_path"] == "lnd-macaroon"
     assert lnd["expected_network"] == "signet"
+    assert lnd["invoice_stream_response_timeout_secs"] == 600
     assert config["faucet"] == {"enabled": True, "amount_sat": 5000}
     assert config["limits"] == {}
     assert config["pow"] == {"base_bits": 16}
