@@ -5,7 +5,7 @@ Notable changes to Satchel. The format follows
 [Semantic Versioning](https://semver.org/). Before 1.0, a minor version may
 rename configuration keys; the entry says so when it does.
 
-## [Unreleased]
+## [0.3.5] - 2026-10-12
 
 - Replace an invoice subscription that LND has not answered within `lnd.invoice_stream_response_timeout_secs` (new, default 600), so a request on a broken connection no longer waits for hours. LND sends nothing until the node has an invoice update, so a quiet node's replacements are counted in `satchel_invoice_stream_resubscribes_total`, not as reconnects.
 - Report when the current subscription request was sent and when LND last answered it (`satchel_invoice_stream_attempt_timestamp_seconds`, `satchel_invoice_stream_confirmed_timestamp_seconds`).
