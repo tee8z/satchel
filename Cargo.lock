@@ -448,9 +448,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.3"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
+checksum = "a2376ffd6f96d8a9db59875b4b6b0237d6900b5baf64279714e05493ce64828a"
 dependencies = [
  "cmov",
 ]
@@ -1030,35 +1030,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "satchel"
-version = "0.3.5"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "base64 0.22.1",
- "bech32",
- "clap",
- "getrandom 0.3.4",
- "hex",
- "maud",
- "qrcode",
- "reqwest",
- "secp256k1",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "tempfile",
- "tokio",
- "toml",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1540,6 +1511,35 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "satchel"
+version = "0.3.5"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "base64 0.22.1",
+ "bech32",
+ "clap",
+ "getrandom 0.3.4",
+ "hex",
+ "maud",
+ "qrcode",
+ "reqwest",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
 
 [[package]]
 name = "schannel"
